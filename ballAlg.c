@@ -13,6 +13,8 @@
 #define RANGE 10
 #endif
 
+typedef uint16_t ssize_t;
+
 #define KILL(...)                                                \
     {                                                            \
         fprintf(stderr, "[ERROR] %s:%d | ", __FILE__, __LINE__); \
@@ -148,6 +150,49 @@ double *parse_args(int argc, char *argv[], ssize_t *n_dimensions,
     }
 
     return pt_arr;
+}
+
+// D**2 = Sum {v=1 to n_dimensions} (pt1_x - pt2_x)**2
+double distance_squared(ssize_t n_dimensions, double const *pt_1, double const *pt_2) {
+    double d_s = 0;
+    for (size_t i = 0; i < n_dimensions; i++) {
+        double aux = (pt_1[i] - pt_2[i]);
+        d_s += aux*aux;
+    }
+    return d_s;
+}
+
+// Returns:
+//    a and b by reference
+//    distance squared
+// assumes n_points >= 2
+// TODO: Only works for first find (We need ** not only * vector
+double find_a_b(double const * points, ssize_t n_dimensions, ssize_t n_points, double ** a, double ** b) {
+    double const *temp_a = points;
+    double const *temp_b = points;
+    double long_dist = 0;
+
+    // O(n**2)
+    for (size_t i = 0; i < n_points; i++) {
+        for (size_t j = i+1; j < n_points; j++) {
+            double aux_long_dist = distance_squared(n_dimensions, points+i, points+j);
+            if (aux_long_dist > long_dist) {
+                long_dist = aux_long_dist;
+                temp_a = points+i;
+                temp_b = points+j;
+            }
+        }
+    }
+
+    *a = temp_a;
+    *b = temp_b;
+
+    return long_dist;
+}
+
+double orthogonal_projection(ssize_t n_dimensions, double const *a, double const *b,
+                     double const *pt) {
+
 }
 
 typedef struct tree_t {
