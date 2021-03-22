@@ -13,8 +13,6 @@
 #define RANGE 10
 #endif
 
-typedef uint16_t ssize_t;
-
 #define KILL(...)                                                \
     {                                                            \
         fprintf(stderr, "[ERROR] %s:%d | ", __FILE__, __LINE__); \
@@ -143,11 +141,17 @@ double *parse_args(int argc, char *argv[], ssize_t *n_dimensions,
     double *pt_arr =
         xmalloc(2 * sizeof(double) * (size_t)*n_dimensions * (size_t)*n_points);
 
+    // double ** pt_points = xmalloc(sizeof(double*) * (size_t)*n_points );
+
     for (ssize_t i = 0; i < *n_points; i++) {
         for (ssize_t j = 0; j < *n_dimensions; j++) {
             pt_arr[i * (*n_dimensions) + j] = RANGE * ((double)random()) / RAND_MAX;
         }
     }
+
+    // for(ssize_t i = 0; i < n_points; i++) {
+    //     pt_points[i] = &pt_arr[i * n_dimensions];
+    // }
 
     return pt_arr;
 }
@@ -155,7 +159,7 @@ double *parse_args(int argc, char *argv[], ssize_t *n_dimensions,
 // D**2 = Sum {v=1 to n_dimensions} (pt1_x - pt2_x)**2
 double distance_squared(ssize_t n_dimensions, double const *pt_1, double const *pt_2) {
     double d_s = 0;
-    for (size_t i = 0; i < n_dimensions; i++) {
+    for (ssize_t i = 0; i < n_dimensions; i++) {
         double aux = (pt_1[i] - pt_2[i]);
         d_s += aux*aux;
     }
@@ -167,14 +171,14 @@ double distance_squared(ssize_t n_dimensions, double const *pt_1, double const *
 //    distance squared
 // assumes n_points >= 2
 // TODO: Only works for first find (We need ** not only * vector
-double find_a_b(double const * points, ssize_t n_dimensions, ssize_t n_points, double ** a, double ** b) {
+double find_a_b(double const * points, ssize_t n_dimensions, ssize_t n_points, double const ** a, double const ** b) {
     double const *temp_a = points;
     double const *temp_b = points;
     double long_dist = 0;
 
     // O(n**2)
-    for (size_t i = 0; i < n_points; i++) {
-        for (size_t j = i+1; j < n_points; j++) {
+    for (ssize_t i = 0; i < n_points; i++) {
+        for (ssize_t j = i+1; j < n_points; j++) {
             double aux_long_dist = distance_squared(n_dimensions, points+i, points+j);
             if (aux_long_dist > long_dist) {
                 long_dist = aux_long_dist;
@@ -192,7 +196,22 @@ double find_a_b(double const * points, ssize_t n_dimensions, ssize_t n_points, d
 
 double orthogonal_projection(ssize_t n_dimensions, double const *a, double const *b,
                      double const *pt) {
+    double orth_pro[n_dimensions];
+    double b_a[n_dimensions];
 
+    double sum_up = 0;
+    double sum_down = 0;
+    for (ssize_t i = 0; i < n_dimensions ; i++) {
+        b_a[i] = b[i]-a[i];
+        sum_up += (pt[i]-a[i]) * b_a[i];
+        sum_down += b_a[i] * b_a[i];
+    }
+    double scaler = sum_up/sum_down;
+    for (ssize_t i = 0; i < n_dimensions ; i++) {
+        orth_pro[i] = scaler * b_a[i] + a[i];
+    }
+
+    return 0.0; // FIX HOw to return prob thrue reference
 }
 
 typedef struct tree_t {
