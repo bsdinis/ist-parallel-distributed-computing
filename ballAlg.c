@@ -99,7 +99,7 @@ static void *_priv_xrealloc(char const *file, int lineno, void *ptr,
 typedef enum {
     TREE_TYPE_INNER      = 0,  // both left and right are inners
     TREE_TYPE_LEFT_LEAF  = 1,  // left is a leaf
-    TREE_TYPE_RIGHT_LEAF = 2,  // right is a leaf
+    TREE_TYPE_RIGHT_LEAF = 2,  // right is a leaf // WILL NEVER OCCOUR
     TREE_TYPE_BOTH_LEAF  = 3,  // both are leaves
 } tree_type_t;
 
@@ -129,7 +129,7 @@ static inline tree_t * tree_index_to_ptr(tree_t * tree_vec, ssize_t idx, ssize_t
 
 // Safety: this assumes both pointers are to the same contiguous array
 static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr, tree_t const *ptr, ssize_t n_dim) {
-    return (ptr == NULL) ? -1 : (size_t)(ptr - base_ptr) / (tree_sizeof(n_dim));
+    return (ptr == NULL) ? -1 : (ptr - base_ptr) / (tree_sizeof(n_dim));
 }
 
 // parse the arguments
@@ -269,7 +269,7 @@ static void choose_pivots(double const *vec, ssize_t l, ssize_t r, double *pivot
     //
     double pivot_pool[PIVOT_POOL_N];
     for (ssize_t i = 0; i < PIVOT_POOL_N; ++i) {
-        pivot_pool[i] = l + random() % (r - l);
+        pivot_pool[i] = (double)l + random() % (r - l);
     }
     insertion_sort(pivot_pool, 0, PIVOT_POOL_N);
 
@@ -362,7 +362,7 @@ static void partition_on_median(double const ** points, ssize_t l, ssize_t r,
 
 
 // l and r define an interval [l, r[
-static tree_t divide_point_set(double const ** points, ssize_t l, ssize_t r, ssize_t n_dimensions) {
+static void divide_point_set(double const ** points, ssize_t l, ssize_t r, ssize_t n_dimensions) {
     ssize_t a = l;
     ssize_t b = l;
     find_two_most_distant(points, l, r, n_dimensions, &a, &b);
@@ -382,19 +382,40 @@ static tree_t divide_point_set(double const ** points, ssize_t l, ssize_t r, ssi
     // O(n)
     partition_on_median(points, l, r, products, median);
 
-    tree_t t = {
-        .t_type = TREE_TYPE_BOTH_LEAF,
-        .t_radius = 0,
-        .t_left = NULL,
-        .t_right = NULL,
-    };
     free(b_minus_a);
     free(products);
+}
 
-    return t;
+static tree_t recurssion(tree_t *tree_nodes, size_t idx, double ** points, ssize_t l, ssize_t r, ssize_t n_dimensions) {
+    divide_point_set(points, l, r, n_dimensions);
+
+    double * m_pt = (l+r)/2;
+
+    // TODO Find center point
+    // Calculate radius
+
+    if (r - l == 2) {
+        tree_nodes[idx].t_type = TREE_TYPE_BOTH_LEAF;
+        tree_nodes[idx].t_left = points[l];
+        tree_nodes[idx].t_right = points[r-1];
+        //TODO
+    }
+    else if (r - l == 3) {
+        tree_nodes[idx].t_type = TREE_TYPE_LEFT_LEAF;
+        tree_nodes[idx].t_left = points[l];
+        recurssion(tree_nodes, tree_right_node_idx(idx), points, m_pt, r,    n_dimensions);
+    }
+    else {
+        recurssion(tree_nodes, tree_left_node_idx(idx),  points, l,    m_pt, n_dimensions);
+        recurssion(tree_nodes, tree_right_node_idx(idx), points, m_pt, r,    n_dimensions);
+    }
+
 }
 
 static ssize_t tree_build(tree_t *tree_nodes, double ** points, ssize_t n_dimensions, ssize_t n_points) {
+
+    recurssion(tree_nodes, 0, points, 0, n_points, n_dimensions);
+
     ssize_t const n_leaves = n_points;
     return n_points - n_leaves;
 }
@@ -405,7 +426,7 @@ static void tree_print(tree_t const *tree_nodes,
         ssize_t n_inner_nodes) {
 
     for (ssize_t i = 0; i < n_inner_nodes; ++i) {
-        tree_t const *t = tree_index_to_ptr(tree_nodes, i);
+        tree_t const *t = tree_index_to_ptr(tree_nodes, i, n_dimensions);
 
         if ((t->t_type & TREE_TYPE_LEFT_LEAF) != 0) {
             double * left = (double *) t->t_left;
@@ -415,7 +436,7 @@ static void tree_print(tree_t const *tree_nodes,
             }
             fputc('\n', stdout);
         }
-        if ((t->t_type & TREE_TYPE_RIGHT_LEAF) != 0) {
+        if ((t->t_type & TREE_TYPE_RIGHT_LEAF) != 0) { // WONT OCCOUR
             double * right = (double *) t->t_right;
             fprintf(stdout, "%zd -1 -1 %.6lf", tree_right_node_idx(i), 0.0);
             for (size_t j = 0; j < (size_t)n_dimensions; ++j) {
@@ -424,7 +445,7 @@ static void tree_print(tree_t const *tree_nodes,
             fputc('\n', stdout);
         }
 
-        fprintf(stdout, "%zd %zd %zd %.6lf", i, tree_left_node_idx(i), tree_right_node_idx(i), t.t_radius);
+        fprintf(stdout, "%zd %zd %zd %.6lf", i, tree_left_node_idx(i), tree_right_node_idx(i), t->t_radius);
         for (size_t j = 0; j < (size_t)n_dimensions; ++j) {
             fprintf(stdout, " %lf", t->t_center[j]);
         }
