@@ -1,9 +1,10 @@
 CC ?= clang
 
-CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wunused -Wpedantic -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion
+CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wunused -Wpedantic -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wvla
 CFLAGS += -Wno-unused-function -Wno-unused-parameter
 #CFLAGS += -std=c++2a
 
+CFLAGS += -std=c18
 CFLAGS += -fsanitize=address,leak
 #CFLAGS += -fsanitize=thread
 #CFLAGS += -fsanitize=memory
