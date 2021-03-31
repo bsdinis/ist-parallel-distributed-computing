@@ -3,7 +3,9 @@
 //
 
 #include <errno.h>
+#include <math.h>
 #include <omp.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +21,9 @@
 #ifndef ssize_t
 #define ssize_t __ssize_t
 #endif
+
+static ssize_t N_DIMENSIONS = 0;
+static ssize_t N_POINTS = 0;
 
 #define KILL(...)                                                \
     {                                                            \
@@ -77,8 +82,21 @@ static void *_priv_xrealloc(char const *file, int lineno, void *ptr,
     return new_ptr;
 }
 
+// checked calloc
+void *_priv_xcalloc(char const *file, int lineno, size_t nmemb, size_t size) {
+    void *ptr = calloc(nmemb, size);
+    if (ptr == NULL && size != 0) {
+        fprintf(stderr, "[ERROR] %s:%d | xcalloc failed: %s\n", file, lineno,
+                strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    return ptr;
+}
+
 #define xmalloc(size) _priv_xmalloc(__FILE__, __LINE__, size)
 #define xrealloc(ptr, size) _priv_xrealloc(__FILE__, __LINE__, ptr, size)
+#define xcalloc(nmemb, size) _priv_xcalloc(__FILE__, __LINE__, nmemb, size)
 
 /* we define a better assert than that from the stdilb
  */
@@ -97,10 +115,10 @@ static void *_priv_xrealloc(char const *file, int lineno, void *ptr,
 #endif /* NDEBUG */
 
 typedef enum {
-    TREE_TYPE_INNER = 0,       // both left and right are inners
-    TREE_TYPE_LEFT_LEAF = 1,   // left is a leaf
-    TREE_TYPE_RIGHT_LEAF = 2,  // right is a leaf // WILL NEVER OCCOUR
-    TREE_TYPE_BOTH_LEAF = 3,   // both are leaves
+    TREE_TYPE_INNER = 0,       // 0b00: both left and right are inners
+    TREE_TYPE_LEFT_LEAF = 1,   // 0b01: left is a leaf
+    TREE_TYPE_RIGHT_LEAF = 2,  // 0b10: right is a leaf // WILL NEVER OCCOUR
+    TREE_TYPE_BOTH_LEAF = 3,   // 0b11: both are leaves
 } tree_type_t;
 
 typedef struct {
@@ -111,6 +129,14 @@ typedef struct {
     double t_center[];
 } tree_t;
 
+static inline bool tree_is_inner(tree_t const *t) { return t->t_type == 0; }
+static inline bool tree_has_left_leaf(tree_t const *t) {
+    return (((uint32_t)t->t_type) & (uint32_t)1) != 0;
+}
+static inline bool tree_has_right_leaf(tree_t const *t) {
+    return (((uint32_t)t->t_type) & (uint32_t)2) != 0;
+}
+
 // consistent functions for assignind indices
 static inline ssize_t tree_left_node_idx(ssize_t parent) {
     return 2 * parent + 1;
@@ -119,36 +145,51 @@ static inline ssize_t tree_right_node_idx(ssize_t parent) {
     return 2 * parent + 2;
 }
 
-static inline size_t tree_sizeof(ssize_t n_dim) {
-    return sizeof(tree_t) + sizeof(double) * (size_t)n_dim;
+static inline size_t tree_sizeof() {
+    return sizeof(tree_t) + sizeof(double) * (size_t)N_DIMENSIONS;
 }
 
-static inline tree_t *tree_index_to_ptr(tree_t *tree_vec, ssize_t idx,
-                                        ssize_t n_dim) {
-    return (tree_t *)(((uint8_t *)tree_vec) + idx * tree_sizeof(n_dim));
+// Safety: this function needs to return a pointer aligned to 8 bytes
+//
+// This is always true, because the original pointer (tree_vec) is also aligned
+// to an 8 byte boundary, and since tree_sizeof() a multiple of 8, the result
+// will also be.
+//
+// However, clang has no visibility of this given the multiple casts
+// (gcc does)
+//
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-align"
+
+static inline tree_t *tree_index_to_ptr(tree_t const *tree_vec, ssize_t idx) {
+    return (tree_t *)(((uint8_t *)tree_vec) + (size_t)idx * tree_sizeof());
 }
+
+#pragma clang diagnostic pop
 
 // Safety: this assumes both pointers are to the same contiguous array
+//         and that base_ptr < ptr
 static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
-                                        tree_t const *ptr, ssize_t n_dim) {
-    return (ptr == NULL) ? -1 : (ptr - base_ptr) / (tree_sizeof(n_dim));
+                                        tree_t const *ptr) {
+    return (ptr == NULL)
+               ? -1
+               : (ssize_t)((size_t)(ptr - base_ptr) / (tree_sizeof()));
 }
 
 // parse the arguments
-static double **parse_args(int argc, char *argv[], ssize_t *n_dimensions,
-                           ssize_t *n_points) {
+static double const **parse_args(int argc, char *argv[], ssize_t *n_points) {
     if (argc != 4) {
         KILL("usage: %s <n_dimensions> <n_points> <seed>", argv[0]);
     }
 
     errno = 0;
-    *n_dimensions = strtoll(argv[1], NULL, 0);
+    N_DIMENSIONS = strtoll(argv[1], NULL, 0);
     if (errno != 0) {
         KILL("failed to parse %s as integer: %s", argv[1], strerror(errno));
     }
-    if (*n_dimensions < 2) {
+    if (N_DIMENSIONS < 2) {
         KILL("Illegal number of dimensions (%zd), must be above 1.",
-             *n_dimensions);
+             N_DIMENSIONS);
     }
 
     errno = 0;
@@ -184,27 +225,26 @@ static double **parse_args(int argc, char *argv[], ssize_t *n_dimensions,
     //                 (note the addition of the root).
     //
     double *pt_arr =
-        xmalloc(sizeof(double) * (size_t)*n_dimensions * (size_t)*n_points);
+        xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
     double **pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);
 
     // double ** pt_points = xmalloc(sizeof(double*) * (size_t)*n_points );
 
     for (ssize_t i = 0; i < *n_points; i++) {
-        for (ssize_t j = 0; j < *n_dimensions; j++) {
-            pt_arr[i * (*n_dimensions) + j] =
+        for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
+            pt_arr[i * (N_DIMENSIONS) + j] =
                 RANGE * ((double)random()) / RAND_MAX;
         }
-        pt_ptr[i] = &pt_arr[i * (*n_dimensions)];
+        pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
     }
 
-    return pt_ptr;
+    return (double const **)pt_ptr;
 }
 
-// D**2 = Sum {v=1 to n_dimensions} (pt1_x - pt2_x)**2
-static inline double distance_squared(ssize_t n_dimensions, double const *pt_1,
-                                      double const *pt_2) {
+// D**2 = Sum {v=1 to N_DIMENSIONS} (pt1_x - pt2_x)**2
+static inline double distance_squared(double const *pt_1, double const *pt_2) {
     double d_s = 0;
-    for (ssize_t i = 0; i < n_dimensions; i++) {
+    for (ssize_t i = 0; i < N_DIMENSIONS; i++) {
         double aux = (pt_1[i] - pt_2[i]);
         d_s += aux * aux;
     }
@@ -216,8 +256,7 @@ static inline double distance_squared(ssize_t n_dimensions, double const *pt_1,
 //    l and r define a range to search (r is exclusive)
 //    distance squared
 static double find_two_most_distant(double const **points, ssize_t l, ssize_t r,
-                                    ssize_t n_dimensions, ssize_t *a,
-                                    ssize_t *b) {
+                                    ssize_t *a, ssize_t *b) {
     ssize_t max_a = 0;
     ssize_t max_b = 0;
     double long_dist = 0;
@@ -226,7 +265,7 @@ static double find_two_most_distant(double const **points, ssize_t l, ssize_t r,
     for (ssize_t i = l; i < r; i++) {
         for (ssize_t j = i + 1; j < r; j++) {
             double aux_long_dist =
-                distance_squared(n_dimensions, points[i], points[j]);
+                distance_squared(points[i], points[j]);
             if (aux_long_dist > long_dist) {
                 long_dist = aux_long_dist;
                 max_a = i;
@@ -242,49 +281,43 @@ static double find_two_most_distant(double const **points, ssize_t l, ssize_t r,
 }
 
 // computes (pt - a) . b_minus_a
-static double inner_product(double const *a, double const *b_minus_a,
-                            double const *pt, ssize_t n_dimensions) {
-    double projection = 0;
-    for (ssize_t i = 0; i < n_dimensions; i++) {
-        projection += b_minus_a[i] * (pt[i] - a[i]);
+static double diff_inner_product(double const *pt, double const *a,
+                                 double const *b_minus_a) {
+    double prod = 0;
+    for (ssize_t i = 0; i < N_DIMENSIONS; i++) {
+        prod += b_minus_a[i] * (pt[i] - a[i]);
     }
 
-    return projection;
+    return prod;
 }
 
-static void insertion_sort(double *vec, ssize_t l, ssize_t r) {
-    for (ssize_t i = l + 1; i < r; ++i) {
-        ssize_t j = i - 1;
-        double val = vec[i];
-        while (j >= l && val < vec[j]) {
-            vec[j + 1] = vec[j];
-            --j;
-        }
-
-        vec[j + 1] = val;
+// a . b
+static double inner_product(double const *a, double const *b) {
+    double prod = 0;
+    for (ssize_t i = 0; i < N_DIMENSIONS; i++) {
+        prod += a[i] * b[i];
     }
+
+    return prod;
 }
 
-static void choose_pivots(double const *vec, ssize_t l, ssize_t r,
-                          double *pivot1, double *pivot2) {
-    // choose N values from the array [0, 1, 2, 3, 4], and consider the 33th and
-    // 66th percentile
-    //
-    double pivot_pool[PIVOT_POOL_N];
-    for (ssize_t i = 0; i < PIVOT_POOL_N; ++i) {
-        pivot_pool[i] = (double)l + random() % (r - l);
+static int cmp_double(void const *a, void const *b) {
+    double a_double = *(double const *)a;
+    double b_double = *(double const *)b;
+    if (a_double < b_double) {
+        return -1;
     }
-    insertion_sort(pivot_pool, 0, PIVOT_POOL_N);
-
-    *pivot1 = pivot_pool[PIVOT_POOL_N / 3];
-    *pivot2 = pivot_pool[PIVOT_POOL_N - PIVOT_POOL_N / 3];
+    if (a_double > b_double) {
+        return 1;
+    }
+    return 0;
 }
 
-static inline void swap_double(double *a, double *b) {
-    double tmp1 = *a;
-    double tmp2 = *b;
-    *a = tmp2;
-    *b = tmp1;
+// Find the median value of a vector
+static double find_median(double *vec, ssize_t size) {
+    qsort(vec, (size_t)size, sizeof(double), cmp_double);
+    return (size % 2 == 0) ? (vec[(size - 2) % 2] + vec[size % 2]) / 2
+                           : vec[(size - 1) % 2];
 }
 
 static inline void swap_ptr(void **a, void **b) {
@@ -294,62 +327,9 @@ static inline void swap_ptr(void **a, void **b) {
     *b = tmp1;
 }
 
-static void three_way_partition(double *vec, ssize_t l, ssize_t r,
-                                double pivot1, double pivot2,
-                                ssize_t *pivot1_loc, ssize_t *pivot2_loc) {
-    ssize_t p1_loc = l;
-    ssize_t p2_loc = r;
-    for (ssize_t i = l; i < r;) {
-        if (vec[i] < pivot1) {
-            swap_double(&vec[i++], &vec[l++]);
-        } else if (vec[i] > pivot2) {
-            swap_double(&vec[i], &vec[r-- - 1]);
-        } else {
-            if (i > p1_loc && vec[i] == pivot1) {
-                p1_loc = i;
-            }
-            if (i < p2_loc && vec[i] == pivot2) {
-                p2_loc = i;
-            }
-            ++i;
-        }
-    }
-
-    *pivot1_loc = p1_loc;
-    *pivot2_loc = p2_loc;
-}
-
-// base 3 quicksort which computes the median in O(n)
-//
-// Pick 2 pivots, one in the first half and one in the second half
-// Partition accordingly
-//
-// Repeat only in the center, until the size is small (then just sort)
-//
-static double find_median(double *vec, ssize_t l, ssize_t r, ssize_t orig_m1,
-                          ssize_t orig_m2) {
-    if (r - l < INSERTION_SORT_CONSTANT) {
-        // brute force
-        insertion_sort(vec, l, r);
-        return (vec[orig_m1] + vec[orig_m2]) / 2;
-    }
-
-    ssize_t pivot1_loc;
-    ssize_t pivot2_loc;
-    do {
-        double pivot1;
-        double pivot2;
-        choose_pivots(vec, l, r, &pivot1, &pivot2);
-        three_way_partition(vec, l, r, pivot1, pivot2, &pivot1_loc,
-                            &pivot2_loc);
-    } while (pivot1_loc > orig_m1 - 1 || pivot2_loc < orig_m2 + 1);
-
-    return find_median(vec, pivot1_loc, pivot2_loc, orig_m1, orig_m2);
-}
-
 // partition on median. The key is given by the product
 static void partition_on_median(double const **points, ssize_t l, ssize_t r,
-                                double *products, double median) {
+                                double const *products, double median) {
     ssize_t i = 0;
     ssize_t j = r - l - 1;
 
@@ -368,86 +348,142 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
     }
 }
 
+// Partition a set of points, finding its center
 // l and r define an interval [l, r[
+//
 static void divide_point_set(double const **points, ssize_t l, ssize_t r,
-                             ssize_t n_dimensions) {
+                             double *center) {
     ssize_t a = l;
     ssize_t b = l;
-    find_two_most_distant(points, l, r, n_dimensions, &a, &b);
-    double *b_minus_a = xmalloc(sizeof(double) * (size_t)n_dimensions);
-    for (ssize_t i = 0; i < n_dimensions; ++i) {
+    double dist = find_two_most_distant(points, l, r, &a, &b);
+
+    double const *a_ptr =
+        points[a];  // points[a] may change after the partition
+    double *b_minus_a = xmalloc((size_t)N_DIMENSIONS * sizeof(double));
+    for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
         b_minus_a[i] = points[b][i] - points[a][i];
     }
 
     double *products = xmalloc((size_t)(r - l) * sizeof(double));
     for (ssize_t i = 0; i < r - l; ++i) {
-        products[i] =
-            inner_product(points[a], b_minus_a, points[l + i], n_dimensions);
+        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
     }
 
     // O(n)
-    double median =
-        find_median(products, 0, r - l, (r + l - 1) / 2, (r + l) / 2);
+    double median = find_median(products, (r - l));
 
     // O(n)
     partition_on_median(points, l, r, products, median);
+
+    double normalized_median = median / dist;
+    for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
+        center[i] =
+            a_ptr[i] + (b_minus_a[i] *       // NOLINT: this does not see that
+                        normalized_median);  // we fully initialize b_minus_a
+    }
 
     free(b_minus_a);
     free(products);
 }
 
-static tree_t recurssion(tree_t *tree_nodes, size_t idx, double **points,
-                         ssize_t l, ssize_t r, ssize_t n_dimensions) {
-    divide_point_set(points, l, r, n_dimensions);
-
-    double *m_pt = (l + r) / 2;
-
-    // TODO Find center point
-    // Calculate radius
-
-    if (r - l == 2) {
-        tree_nodes[idx].t_type = TREE_TYPE_BOTH_LEAF;
-        tree_nodes[idx].t_left = points[l];
-        tree_nodes[idx].t_right = points[r - 1];
-        // TODO
-    } else if (r - l == 3) {
-        tree_nodes[idx].t_type = TREE_TYPE_LEFT_LEAF;
-        tree_nodes[idx].t_left = points[l];
-        recurssion(tree_nodes, tree_right_node_idx(idx), points, m_pt, r,
-                   n_dimensions);
-    } else {
-        recurssion(tree_nodes, tree_left_node_idx(idx), points, l, m_pt,
-                   n_dimensions);
-        recurssion(tree_nodes, tree_right_node_idx(idx), points, m_pt, r,
-                   n_dimensions);
+// Compute radius of a ball, given its center
+//
+static double compute_radius(double const **points, ssize_t l, ssize_t r,
+                             double const *center) {
+    double max_dist_sq = 0.0;
+    for (ssize_t i = l; i < r; i++) {
+        double dist = distance_squared(center, points[i]);
+        if (dist > max_dist_sq) {
+            max_dist_sq = dist;
+        }
     }
+
+    return sqrt(max_dist_sq);
 }
 
-static ssize_t tree_build(tree_t *tree_nodes, double **points,
-                          ssize_t n_dimensions, ssize_t n_points) {
-    recurssion(tree_nodes, 0, points, 0, n_points, n_dimensions);
+static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
+                              ssize_t idx, ssize_t l, ssize_t r,
+                              ssize_t *max_idx) {
+    assert(r - l > 1, "1-sized trees are out of scope");
+    assert(idx < 2 * N_POINTS,
+           "there can never be more inner nodes than leaves");
+    if (idx > *max_idx) {
+        *max_idx = idx;
+    }
 
-    ssize_t const n_leaves = n_points;
-    return n_points - n_leaves;
+    tree_t *t = tree_index_to_ptr(tree_nodes, idx);
+    // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
+    // (void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
+
+    divide_point_set(points, l, r, t->t_center);
+    t->t_radius = compute_radius(points, l, r, t->t_center);
+
+    ssize_t m = (l + r) / 2;
+    if (r - l == 2) {
+        t->t_type = TREE_TYPE_BOTH_LEAF;
+        t->t_left = (void *)points[l];
+        t->t_right = (void *)points[r - 1];
+        return 1;
+    }
+
+    if (r - l == 3) {
+        t->t_type = TREE_TYPE_LEFT_LEAF;
+        t->t_left = (void *)points[l];
+        t->t_right =
+            (void *)tree_index_to_ptr(tree_nodes, tree_right_node_idx(idx));
+        return 1 + tree_build_aux(tree_nodes, points, tree_right_node_idx(idx),
+                                  m, r, max_idx);
+    }
+
+    t->t_type = TREE_TYPE_INNER;
+    t->t_left = (void *)tree_index_to_ptr(tree_nodes, tree_left_node_idx(idx));
+    t->t_right =
+        (void *)tree_index_to_ptr(tree_nodes, tree_right_node_idx(idx));
+    return 1 +
+           tree_build_aux(tree_nodes, points, tree_left_node_idx(idx), l, m,
+                          max_idx) +
+           tree_build_aux(tree_nodes, points, tree_right_node_idx(idx), m, r,
+                          max_idx);
 }
 
-static void tree_print(tree_t const *tree_nodes, double **points,
-                       ssize_t n_dimensions, ssize_t n_inner_nodes) {
-    for (ssize_t i = 0; i < n_inner_nodes; ++i) {
-        tree_t const *t = tree_index_to_ptr(tree_nodes, i, n_dimensions);
+// returns the number of inner nodes (ie: tree_t structs)
+//
+static ssize_t tree_build(tree_t *tree_nodes, double const **points,
+                          ssize_t n_points, ssize_t *max_idx) {
+    return tree_build_aux(tree_nodes, points, 0, 0, n_points, max_idx);
+}
 
-        if ((t->t_type & TREE_TYPE_LEFT_LEAF) != 0) {
-            double *left = (double *)t->t_left;
+static void tree_print(tree_t const *tree_nodes, ssize_t max_idx,
+                       ssize_t n_tree_nodes, ssize_t n_points) {
+    fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, n_tree_nodes + n_points);
+
+    for (ssize_t i = 0; i <= max_idx; ++i) {
+        tree_t const *t = tree_index_to_ptr(tree_nodes, i);
+        if (t->t_radius == 0) {
+            continue;
+        }
+        /*
+        LOG("printing %zd {\n"
+            "   type:   %d,\n"
+            "   radius: %lf,\n"
+            "   left:   %p,\n"
+            "   right:  %p,\n"
+            "}", i, t->t_type, t->t_radius, t->t_left, t->t_right);
+            */
+
+        if (tree_has_left_leaf(t) != 0) {
+            double const *left = (double const *)t->t_left;
             fprintf(stdout, "%zd -1 -1 %.6lf", tree_left_node_idx(i), 0.0);
-            for (size_t j = 0; j < (size_t)n_dimensions; ++j) {
+            for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
                 fprintf(stdout, " %lf", left[j]);
             }
             fputc('\n', stdout);
         }
-        if ((t->t_type & TREE_TYPE_RIGHT_LEAF) != 0) {  // WONT OCCOUR
-            double *right = (double *)t->t_right;
+
+        if (tree_has_right_leaf(t) != 0) {
+            double const *right = (double const *)t->t_right;
             fprintf(stdout, "%zd -1 -1 %.6lf", tree_right_node_idx(i), 0.0);
-            for (size_t j = 0; j < (size_t)n_dimensions; ++j) {
+            for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
                 fprintf(stdout, " %lf", right[j]);
             }
             fputc('\n', stdout);
@@ -455,7 +491,7 @@ static void tree_print(tree_t const *tree_nodes, double **points,
 
         fprintf(stdout, "%zd %zd %zd %.6lf", i, tree_left_node_idx(i),
                 tree_right_node_idx(i), t->t_radius);
-        for (size_t j = 0; j < (size_t)n_dimensions; ++j) {
+        for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
             fprintf(stdout, " %lf", t->t_center[j]);
         }
         fputc('\n', stdout);
@@ -465,26 +501,26 @@ static void tree_print(tree_t const *tree_nodes, double **points,
 int main(int argc, char *argv[]) {
     double const begin = omp_get_wtime();
 
-    ssize_t n_dimensions;
     ssize_t n_points;
-    double **points = parse_args(argc, argv, &n_dimensions, &n_points);
-    double *point_values = points[0];
+    double const **points = parse_args(argc, argv, &n_points);
+    double const *point_values = points[0];
+    N_POINTS = n_points;
 
-    // as discussed in gen_tree_points, the number of inner nodes is
+    // As discussed in gen_tree_points, the number of inner nodes is
     // assymptotically the number of leaves of the tree
+    // However, since our id assignment is sparse, we double that size, because
+    // even the sparse assignment is bounded by 2*n_points
     //
     tree_t *tree_nodes =
-        xmalloc((size_t)n_points *
-                (sizeof(tree_t) +
-                 sizeof(double) * n_dimensions));  // FMA initialization
-    ssize_t n_inner_nodes =
-        tree_build(tree_nodes, points, n_dimensions, n_points);
+        xcalloc(2 * (size_t)n_points, tree_sizeof());  // FMA initialization
+    ssize_t max_idx = 0;
+    ssize_t n_tree_nodes = tree_build(tree_nodes, points, n_points, &max_idx);
 
     fprintf(stderr, "%.1lf\n", omp_get_wtime() - begin);
 
-    tree_print(tree_nodes, points, n_dimensions, n_inner_nodes);
+    tree_print(tree_nodes, max_idx, n_tree_nodes, n_points);
 
-    free(point_values);
+    free((void *)point_values);
     free(points);
     free(tree_nodes);
 }
