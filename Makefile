@@ -1,7 +1,8 @@
 CC ?= clang
+CXX ?= clang++
 
 CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wunused -Wpedantic -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wvla
-CFLAGS += -Wno-unused-function -Wno-unused-parameter -Wno-unknown-pragmas
+CFLAGS += -Wno-unused-parameter -Wno-unknown-pragmas
 #CFLAGS += -std=c++2a
 
 CFLAGS += -std=gnu18
@@ -16,7 +17,7 @@ ifeq (${DEBUG}, 0)
 	CFLAGS += -O3 -flto -DNDEBUG
 else
 	# debug setting
-	CFLAGS += -O0 -g
+	CFLAGS += -O3 -g
 endif
 
 all: ballQuery ballQuery_pipe ballAlg
@@ -26,7 +27,7 @@ SOURCES := ballAlg.c
 ballAlg: ballAlg.c
 
 ballQuery: ballQuery.c
-	$(CC) -lm $^ -o $@
+	$(CC) -O3 -g -DNEBUG -fsanitize=address -lm $^ -o $@
 
 ballQuery_pipe: ballQuery_pipe.c
 	$(CC) -O3 -g -DNEBUG -fsanitize=address -lm $^ -o $@
