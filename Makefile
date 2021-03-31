@@ -21,7 +21,7 @@ else
 	TARGET_DIR=target/debug
 endif
 
-all: serial move_objects
+all: ballQuery ballQuery_pipe ballAlg
 
 .PHONY: serial
 serial: ballAlg
@@ -42,8 +42,17 @@ ballAlg-mpi: ballAlg-mpi.o
 move_objects:
 	@mv ballAlg ${TARGET_DIR}/ballAlg
 
-   #@mv ballAlg-omp ${TARGET_DIR}/ballAlg-omp
-   #@mv ballAlg-mpi ${TARGET_DIR}/ballAlg-mpi
+ballQuery_pipe: ballQuery_pipe.c
+	$(CC) -O3 -g -DNEBUG -fsanitize=address -lm $^ -o $@
+
+ballAlg-omp: ballAlg-omp.c
+ballAlg-mpi: ballAlg-mpi.c
+
+test:
+	ls tests | grep _s | xargs ./sbin/test.sh
+
+all_tests:
+	./sbin/test.sh
 
 .PHONY: fmt
 fmt:
@@ -55,4 +64,4 @@ tidy:
 
 .PHONY: clean
 clean:
-	@rm -f target/release/* target/debug/*
+	rm -f ballAlg ballQuery_pipe ballQuery ballAlg-omp ballAlg-mpi

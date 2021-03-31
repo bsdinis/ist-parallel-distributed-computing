@@ -1,4 +1,10 @@
-target
+*.tree
+ballAlg
+ballQuery
+ballQuery_pipe
+ballAlg-omp
+ballAlg-mpi
+.envrc
 # ---> C++
 # Prerequisites
 *.d
