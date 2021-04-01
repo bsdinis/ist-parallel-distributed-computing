@@ -20,6 +20,12 @@ else
 	CFLAGS += -O3 -g
 endif
 
+ifneq (${DEBUG}, 0)
+	# when profiling this will not print
+	CFLAGS += -O3 -flto -DNDEBUG -g
+	CFLAGS += -DPROFILE
+endif
+
 all: ballQuery ballQuery_pipe ballAlg
 
 SOURCES := ballAlg.c

@@ -452,7 +452,9 @@ int main(int argc, char *argv[]) {
 
     fprintf(stderr, "%.1lf\n", omp_get_wtime() - begin);
 
+#ifndef PROFILE
     tree_print(tree_nodes, max_idx, n_tree_nodes);
+#endif
 
     free((void *)point_values);
     free(points);
