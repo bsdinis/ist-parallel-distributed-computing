@@ -29,11 +29,13 @@ ifeq (${PROFILE}, 1)
 	CFLAGS += -DPROFILE
 endif
 
-all: ballQuery ballQuery_pipe ballAlg
+all: ballQuery ballQuery_pipe ballAlg ballAlg_x ballAlg_md_n2
 
-SOURCES := ballAlg.c
+SOURCES := ballAlg.c ballAlg_x.c ballAlg_md_n2.c
 
 ballAlg: ballAlg.c
+ballAlg_x: ballAlg_x.c
+ballAlg_md_n2: ballAlg_md_n2.c
 
 ballQuery: ballQuery.c
 	$(CC) -O3 -g -DNEBUG -fsanitize=address -lm $^ -o $@
