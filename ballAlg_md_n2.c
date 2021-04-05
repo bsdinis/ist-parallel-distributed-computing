@@ -257,28 +257,27 @@ static inline double distance_squared(double const *pt_1, double const *pt_2) {
 //    distance squared
 static double find_two_most_distant(double const **points, ssize_t l, ssize_t r,
                                     ssize_t *a, ssize_t *b) {
-    double dist_l_a = 0;
-    for (ssize_t i = l + 1; i < r; ++i) {
-        double dist = distance_squared(points[l], points[i]);
-        if (dist > dist_l_a) {
-            dist_l_a = dist;
-            *a = i;
+    ssize_t max_a = 0;
+    ssize_t max_b = 0;
+    double long_dist = 0;
+
+    // O(n**2)
+    for (ssize_t i = l; i < r; i++) {
+        for (ssize_t j = i + 1; j < r; j++) {
+            double aux_long_dist =
+                distance_squared(points[i], points[j]);
+            if (aux_long_dist > long_dist) {
+                long_dist = aux_long_dist;
+                max_a = i;
+                max_b = j;
+            }
         }
     }
 
-    double dist_a_b = 0;
-    for (ssize_t i = l; i < r; ++i) {
-        if (i == *a) {
-            continue;
-        }
-        double dist = distance_squared(points[*a], points[i]);
-        if (dist > dist_a_b) {
-            dist_a_b = dist;
-            *b = i;
-        }
-    }
+    *a = max_a;
+    *b = max_b;
 
-    return dist_a_b;
+    return long_dist;
 }
 
 // computes (pt - a) . b_minus_a
@@ -317,8 +316,8 @@ static int cmp_double(void const *a, void const *b) {
 // Find the median value of a vector
 static double find_median(double *vec, ssize_t size) {
     qsort(vec, (size_t)size, sizeof(double), cmp_double);
-    return (size % 2 == 0) ? (vec[(size - 2) / 2] + vec[size / 2]) / 2
-                           : vec[(size - 1) / 2];
+    return (size % 2 == 0) ? (vec[(size - 2) % 2] + vec[size % 2]) / 2
+                           : vec[(size - 1) % 2];
 }
 
 static inline void swap_ptr(void **a, void **b) {
@@ -414,7 +413,7 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
-    //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
+    // (void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
 
     divide_point_set(points, l, r, t->t_center);
     t->t_radius = compute_radius(points, l, r, t->t_center);
