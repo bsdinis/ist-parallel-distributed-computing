@@ -4,6 +4,8 @@ ballQuery
 ballQuery_pipe
 ballAlg-omp
 ballAlg-mpi
+perf/*
+
 .envrc
 # ---> C++
 # Prerequisites

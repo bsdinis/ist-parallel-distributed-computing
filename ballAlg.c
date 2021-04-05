@@ -143,7 +143,6 @@ typedef struct {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
 static inline bool tree_is_inner(tree_t const *t) { return t->t_type == 0; }
-#pragma clang diagnostic pop
 static inline bool tree_has_left_leaf(tree_t const *t) {
     return (((uint32_t)t->t_type) & (uint32_t)1) != 0;
 }
@@ -162,6 +161,7 @@ static inline ssize_t tree_right_node_idx(ssize_t parent) {
 static inline size_t tree_sizeof() {
     return sizeof(tree_t) + sizeof(double) * (size_t)N_DIMENSIONS;
 }
+#pragma clang diagnostic pop
 
 // Safety: this function needs to return a pointer aligned to 8 bytes
 //
@@ -370,6 +370,7 @@ static ssize_t tree_build(tree_t *tree_nodes, double const **points,
     return tree_build_aux(tree_nodes, points, &idx, 0, n_points, max_idx);
 }
 
+#ifndef PROFILE
 static void tree_print(tree_t const *tree_nodes, ssize_t max_idx,
                        ssize_t n_tree_nodes) {
     fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, n_tree_nodes);
@@ -433,11 +434,12 @@ static void tree_print(tree_t const *tree_nodes, ssize_t max_idx,
     }
     DBG(assert(actual_printed == n_tree_nodes, "mismatch");)
 }
+#endif
 
 int main(int argc, char *argv[]) {
     double const begin = omp_get_wtime();
 
-    ssize_t n_points;
+    ssize_t n_points = 0;
     double const **points = parse_args(argc, argv, &n_points);
     double const *point_values = points[0];
     DBG(N_POINTS = n_points;)
@@ -448,7 +450,11 @@ int main(int argc, char *argv[]) {
     tree_t *tree_nodes =
         xcalloc((size_t)n_points, tree_sizeof());  // FMA initialization
     ssize_t max_idx = 0;
+#ifndef PROFILE
     ssize_t n_tree_nodes = tree_build(tree_nodes, points, n_points, &max_idx);
+#else
+    tree_build(tree_nodes, points, n_points, &max_idx);
+#endif
 
     fprintf(stderr, "%.1lf\n", omp_get_wtime() - begin);
 

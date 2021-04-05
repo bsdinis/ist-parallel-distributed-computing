@@ -6,9 +6,12 @@ CFLAGS += -Wno-unused-parameter -Wno-unknown-pragmas
 #CFLAGS += -std=c++2a
 
 CFLAGS += -std=gnu18
-CFLAGS += -fsanitize=address,leak
-#CFLAGS += -fsanitize=thread
-#CFLAGS += -fsanitize=memory
+
+ifneq (${PROFILE}, 1)
+	CFLAGS += -fsanitize=address,leak
+	#CFLAGS += -fsanitize=thread
+	#CFLAGS += -fsanitize=memory
+endif
 
 LDFLAGS += -lm -fopenmp -lomp # -lmpi
 
@@ -20,7 +23,7 @@ else
 	CFLAGS += -O3 -g
 endif
 
-ifneq (${DEBUG}, 0)
+ifeq (${PROFILE}, 1)
 	# when profiling this will not print
 	CFLAGS += -O3 -flto -DNDEBUG -g
 	CFLAGS += -DPROFILE
@@ -54,6 +57,12 @@ fmt:
 .PHONY: tidy
 tidy:
 	@clang-tidy $(SOURCES)
+
+.PHONY: perf
+perf:
+	perf -F 99 --cal-graph dwarf
+
+
 
 .PHONY: clean
 clean:
