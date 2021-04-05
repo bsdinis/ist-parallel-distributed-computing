@@ -5,7 +5,7 @@ CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wunused -Wpedantic -Wconversion -W
 CFLAGS += -Wno-unused-parameter -Wno-unknown-pragmas
 #CFLAGS += -std=c++2a
 
-CFLAGS += -std=gnu18
+CFLAGS += -std=c17
 
 ifneq (${PROFILE}, 1)
 	CFLAGS += -fsanitize=address,leak
