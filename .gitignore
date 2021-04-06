@@ -1,9 +1,11 @@
 *.tree
 ballAlg
-ballQuery
-ballQuery_pipe
+ballAlg_x
+ballAlg_md_n2
 ballAlg-omp
 ballAlg-mpi
+ballQuery
+ballQuery_pipe
 perf/*
 
 .envrc
