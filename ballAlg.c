@@ -366,15 +366,17 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
     }
 
     double *products = xmalloc((size_t)(r - l) * sizeof(double));
+    double *products_aux = xmalloc((size_t)(r - l) * sizeof(double)); // OPTIMIZE only one malloc
     for (ssize_t i = 0; i < r - l; ++i) {
-        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
+        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a); // Optimize
+        products_aux[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
     }
 
     // O(n)
     double median = find_median(products, (r - l));
 
     // O(n)
-    partition_on_median(points, l, r, products, median);
+    partition_on_median(points, l, r, products_aux, median);
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
@@ -385,6 +387,7 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 
     free(b_minus_a);
     free(products);
+    free(products_aux);
 }
 
 // Compute radius of a ball, given its center
