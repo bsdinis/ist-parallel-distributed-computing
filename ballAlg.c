@@ -330,9 +330,10 @@ static inline void swap_ptr(void **a, void **b) {
 
 // partition on median. The key is given by the product
 static void partition_on_median(double const **points, ssize_t l, ssize_t r,
-                                double const *products, double median) {
+                                double *products, double median) {
     ssize_t i = 0;
     ssize_t j = r - l - 1;
+    ssize_t k = ( r - l ) / 2;
     while (i < j) {
         while (i < j && products[i] < median) {
             i++;
@@ -341,11 +342,19 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
             j--;
         }
         if (i < j) {
+            if(products[i] == median){//i and j will swap
+                k = j;
+            }
+            else if(products[j] == median){
+                k = i;
+            }
             swap_ptr((void **)&points[l + i], (void **)&points[l + j]);
             i++;
             j--;
         }
     }
+    ssize_t m = (r - l) / 2 ;   
+    swap_ptr((void **)&points[l + k], (void **)&points[l + m]);
 }
 
 // Partition a set of points, finding its center
@@ -364,34 +373,19 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
         b_minus_a[i] = points[b][i] - points[a][i];
     }
 
-    double *products = xmalloc((size_t)(r - l) * sizeof(double));
-    double *products_aux = xmalloc((size_t)(r - l) * sizeof(double)); // OPTIMIZE only one malloc
+    double *products = xmalloc((size_t)(r - l)* 2 * sizeof(double));
+    double *products_aux = products + r - l;
     for (ssize_t i = 0; i < r - l; ++i) {
-        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a); // Optimize
-        products_aux[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
+        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
+        products_aux[i] = products[i];
     }
 
     // O(n)
     double median = find_median(products, (r - l));
 
     // O(n)
-    if (r - l != 3) {
-        partition_on_median(points, l, r, products_aux, median);
-    }
-    else{
-        if(products_aux[0] == median){
-            double tmp1 = products_aux[0];
-            double tmp2 = products_aux[1];
-            products_aux[0] = tmp2;
-            products_aux[1] = tmp1;
-        }
-        else if(products_aux[2] == median){
-            double tmp1 = products_aux[2];
-            double tmp2 = products_aux[1];
-            products_aux[2] = tmp2;
-            products_aux[1] = tmp1;
-        }
-    }
+    partition_on_median(points, l, r, products_aux, median);
+   
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
@@ -402,7 +396,6 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 
     free(b_minus_a);
     free(products);
-    free(products_aux);
 }
 
 // Compute radius of a ball, given its center
