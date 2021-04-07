@@ -1,5 +1,6 @@
 *.tree
 ballAlg
+ballAlg_centroid
 ballAlg_x
 ballAlg_md_n2
 ballAlg-omp

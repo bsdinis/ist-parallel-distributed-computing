@@ -342,7 +342,7 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
             j--;
         }
         if (i < j) {
-            if(products[i] == median){//i and j will swap
+            if(products[i] == median){ //i and j will swap
                 k = j;
             }
             else if(products[j] == median){
@@ -353,8 +353,8 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
             j--;
         }
     }
-    ssize_t m = (r - l) / 2 ;   
-    swap_ptr((void **)&points[l + k], (void **)&points[l + m]);
+    ssize_t m = (r - l) / 2 ;
+    swap_ptr((void **)&points[l + k], (void **)&points[l + m]); // ensure medium is on the right set
 }
 
 // Partition a set of points, finding its center
