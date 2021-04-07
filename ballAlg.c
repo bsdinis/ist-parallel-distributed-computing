@@ -333,8 +333,11 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
                                 double const *products, double median) {
     ssize_t i = 0;
     ssize_t j = r - l - 1;
-
+    LOG("left %ld, right %ld", l, r);
     while (i < j) {
+        for(ssize_t k = 0; k < r - l; k++)
+            fprintf(stderr, "%f ", products[k]);
+        fprintf(stderr, "\n");
         while (i < j && products[i] < median) {
             i++;
         }
@@ -347,6 +350,10 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
             j--;
         }
     }
+    LOG("After while");
+    for(ssize_t k = 0; k < r - l; k++)
+            fprintf(stderr, "%f ", products[k]);
+        fprintf(stderr, "\n");
 }
 
 // Partition a set of points, finding its center
@@ -376,7 +383,23 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
     double median = find_median(products, (r - l));
 
     // O(n)
-    partition_on_median(points, l, r, products_aux, median);
+    if (r - l != 3) {
+        partition_on_median(points, l, r, products_aux, median);
+    }
+    else{
+        if(products_aux[0] == median){
+            double tmp1 = products_aux[0];
+            double tmp2 = products_aux[1];
+            products_aux[0] = tmp2;
+            products_aux[1] = tmp1;
+        }
+        else if(products_aux[2] == median){
+            double tmp1 = products_aux[2];
+            double tmp2 = products_aux[1];
+            products_aux[2] = tmp2;
+            products_aux[1] = tmp1;
+        }
+    }
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
