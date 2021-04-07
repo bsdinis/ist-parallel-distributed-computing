@@ -333,11 +333,7 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
                                 double const *products, double median) {
     ssize_t i = 0;
     ssize_t j = r - l - 1;
-    LOG("left %ld, right %ld", l, r);
     while (i < j) {
-        for(ssize_t k = 0; k < r - l; k++)
-            fprintf(stderr, "%f ", products[k]);
-        fprintf(stderr, "\n");
         while (i < j && products[i] < median) {
             i++;
         }
@@ -350,10 +346,6 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
             j--;
         }
     }
-    LOG("After while");
-    for(ssize_t k = 0; k < r - l; k++)
-            fprintf(stderr, "%f ", products[k]);
-        fprintf(stderr, "\n");
 }
 
 // Partition a set of points, finding its center
