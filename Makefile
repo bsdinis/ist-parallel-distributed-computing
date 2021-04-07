@@ -69,4 +69,4 @@ perf:
 
 .PHONY: clean
 clean:
-	@rm -f ballAlg ballQuery_pipe ballQuery ballAlg-omp ballAlg-mpi
+	@rm -f ballAlg ballAlg_x ballAlg_md_n2 ballAlg_centroid ballQuery_pipe ballQuery ballAlg-omp ballAlg-mpi
