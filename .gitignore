@@ -2,7 +2,8 @@
 ballAlg
 ballAlg_centroid
 ballAlg_x
-ballAlg_md_n2
+ballAlg_n2
+ballAlg_random
 ballAlg-omp
 ballAlg-mpi
 ballQuery

@@ -1,0 +1,6 @@
+algo.o: algo.c algo.h types.h strategy.h geometry.h utils.h
+geometry.o: geometry.c geometry.h types.h
+main.o: main.c main.h strategy.h types.h utils.h tree.h
+strategy.o: strategy.c strategy.h types.h geometry.h utils.h
+tree.o: tree.c tree.h types.h strategy.h algo.h utils.h
+utils.o: utils.c

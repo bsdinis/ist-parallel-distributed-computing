@@ -1,51 +1,44 @@
-CC ?= clang
-CXX ?= clang++
+all: ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_random ballAlg_centroid
 
-CFLAGS = -Wall -Wextra -Wshadow -Wcast-align -Wunused -Wpedantic -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wvla
-CFLAGS += -Wno-unused-parameter -Wno-unknown-pragmas
-#CFLAGS += -std=c++2a
+.PHONY: ballAlg
+ballAlg:
+	make -C src ballAlg
+	cp src/ballAlg .
 
-CFLAGS += -std=c17
+.PHONY: ballAlg_n2
+ballAlg_n2:
+	make -C src ballAlg_n2
+	cp src/ballAlg_n2 .
 
-ifneq (${PROFILE}, 1)
-	CFLAGS += -fsanitize=address,leak
-	#CFLAGS += -fsanitize=thread
-	#CFLAGS += -fsanitize=memory
-endif
+.PHONY: ballAlg_centroid
+ballAlg_centroid:
+	make -C src ballAlg_centroid
+	cp src/ballAlg_centroid .
 
-LDFLAGS += -lm -fopenmp -lomp # -lmpi
+.PHONY: ballAlg_random
+ballAlg_random:
+	make -C src ballAlg_random
+	cp src/ballAlg_random .
 
-ifeq (${DEBUG}, 0)
-	# perf setting
-	CFLAGS += -O3 -flto -DNDEBUG
-else
-	# debug setting
-	CFLAGS += -O3 -g
-endif
+.PHONY: ballQuery
+ballQuery:
+	make -C src ballQuery
+	cp src/ballQuery .
 
-ifeq (${PROFILE}, 1)
-	# when profiling this will not print
-	CFLAGS += -O3 -flto -DNDEBUG -g
-	CFLAGS += -DPROFILE
-endif
+.PHONY: ballQuery_pipe
+ballQuery_pipe:
+	make -C src ballQuery_pipe
+	cp src/ballQuery_pipe .
 
-all: ballQuery ballQuery_pipe ballAlg ballAlg_x ballAlg_md_n2 ballAlg_centroid
+.PHONY: ballAlg-omp
+ballAlg-omp:
+	make -C src ballAlg-omp
+	cp src/ballAlg-omp .
 
-SOURCES := ballAlg.c ballAlg_x.c ballAlg_md_n2.c ballAlg_centroid.c
-
-ballAlg: ballAlg.c
-ballAlg_x: ballAlg_x.c
-ballAlg_md_n2: ballAlg_md_n2.c
-ballAlg_centroid: ballAlg_centroid.c
-
-ballQuery: ballQuery.c
-	$(CC) -O3 -g -DNEBUG -fsanitize=address -lm $^ -o $@
-
-ballQuery_pipe: ballQuery_pipe.c
-	$(CC) -O3 -g -DNEBUG -fsanitize=address -lm $^ -o $@
-
-ballAlg-omp: ballAlg-omp.c
-ballAlg-mpi: ballAlg-mpi.c
+.PHONY: ballAlg-mpi
+ballAlg-mpi:
+	make -C src ballAlg-mpi
+	cp src/ballAlg-mpi .
 
 test:
 	ls tests | grep _s | xargs ./sbin/test.sh
@@ -55,18 +48,20 @@ all_tests:
 
 .PHONY: fmt
 fmt:
-	@clang-format -i -style=file *.c
+	make -C lib fmt
+	make -C src fmt
 
 .PHONY: tidy
 tidy:
-	@clang-tidy $(SOURCES)
+	make -C lib tidy
+	make -C src tidy
 
 .PHONY: perf
 perf:
 	perf -F 99 --cal-graph dwarf
 
-
-
 .PHONY: clean
 clean:
-	@rm -f ballAlg ballAlg_x ballAlg_md_n2 ballAlg_centroid ballQuery_pipe ballQuery ballAlg-omp ballAlg-mpi
+	make -C src clean
+	make -C lib clean
+	rm -f ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_centroid ballAlg_random

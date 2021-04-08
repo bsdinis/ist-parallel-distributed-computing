@@ -1,7 +1,12 @@
-#define xmalloc(size) _priv_xmalloc(__FILE__, __LINE__, size)
-#define xrealloc(ptr, size) _priv_xrealloc(__FILE__, __LINE__, ptr, size)
-#define xcalloc(nmemb, size) _priv_xcalloc(__FILE__, __LINE__, nmemb, size)
+#pragma once
 
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+#define xmalloc(size) priv_xmalloc__(__FILE__, __LINE__, size)
+#define xrealloc(ptr, size) priv_xrealloc__(__FILE__, __LINE__, ptr, size)
+#define xcalloc(nmemb, size) priv_xcalloc__(__FILE__, __LINE__, nmemb, size)
 
 #define KILL(...)                                                \
     {                                                            \
@@ -46,3 +51,7 @@
         __builtin_unreachable(); \
     }
 #endif /* NDEBUG */
+
+void *priv_xmalloc__(char const *file, int lineno, size_t size);
+void *priv_xrealloc__(char const *file, int lineno, void *ptr, size_t size);
+void *priv_xcalloc__(char const *file, int lineno, size_t nmemb, size_t size);
