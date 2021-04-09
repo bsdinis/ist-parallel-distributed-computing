@@ -15,14 +15,16 @@ endif
 
 ifeq (${DEBUG}, 0)
 	# perf setting
-	CFLAGS += -O3 -flto -DNDEBUG
+	CFLAGS += -O3 -DNDEBUG
 else
 	# debug setting
 	CFLAGS += -O0 -g
 endif
 
 ifeq (${PROFILE}, 1)
+	# gcc is known to optmize better
+	CC = gcc
+	CXX = g++
 	# when profiling this will not print
-	CFLAGS += -O3 -flto -DNDEBUG -g
-	CFLAGS += -DPROFILE
+	CFLAGS += -O3 -flto -DNDEBUG -g  -DPROFILE
 endif

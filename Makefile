@@ -48,12 +48,10 @@ all_tests:
 
 .PHONY: fmt
 fmt:
-	make -C lib fmt
 	make -C src fmt
 
 .PHONY: tidy
 tidy:
-	make -C lib tidy
 	make -C src tidy
 
 .PHONY: perf
@@ -63,5 +61,4 @@ perf:
 .PHONY: clean
 clean:
 	make -C src clean
-	make -C lib clean
 	rm -f ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_centroid ballAlg_random

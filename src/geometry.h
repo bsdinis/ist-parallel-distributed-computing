@@ -1,7 +1,11 @@
-#include "geometry.h"
+/***
+ * generic geometric functions
+ */
+
+#pragma once
 #include "types.h"
 
-extern ssize_t const N_DIMENSIONS;
+extern ssize_t N_DIMENSIONS;
 
 // ----------------------------------------------------------
 // Distance functions

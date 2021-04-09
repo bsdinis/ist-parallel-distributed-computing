@@ -1,12 +1,17 @@
-#include "algo.h"
+/**
+ * Functions for the algorithm
+ */
+
+#pragma once
 #include "geometry.h"
+#include "strategy.h"
 #include "types.h"
 #include "utils.h"
 
 #include <math.h>
 #include <stdlib.h>
 
-extern ssize_t const N_DIMENSIONS;
+extern ssize_t N_DIMENSIONS;
 
 // ----------------------------------------------------------
 // Aux functions
@@ -85,8 +90,8 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
 // Divide a point set, finding its center (for the ball algorithm)
 // will reorder the points in the set.
 //
-void divide_point_set(double const **points, ssize_t l, ssize_t r,
-                      strategy_t find_points, double *center) {
+static void divide_point_set(double const **points, ssize_t l, ssize_t r,
+                             strategy_t find_points, double *center) {
     ssize_t a = l;
     ssize_t b = l;
     double dist = find_points(points, l, r, &a, &b);
@@ -124,8 +129,8 @@ void divide_point_set(double const **points, ssize_t l, ssize_t r,
 
 // Compute radius of a ball, given its center
 //
-double compute_radius(double const **points, ssize_t l, ssize_t r,
-                      double const *center) {
+static double compute_radius(double const **points, ssize_t l, ssize_t r,
+                             double const *center) {
     double max_dist_sq = 0.0;
     for (ssize_t i = l; i < r; i++) {
         double dist = distance_squared(center, points[i]);

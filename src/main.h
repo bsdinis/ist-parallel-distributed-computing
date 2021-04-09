@@ -1,16 +1,15 @@
-#include "main.h"
+#pragma once
 
 #include <errno.h>
-#include <omp.h>
-#include <stdlib.h>
-#include <string.h>
-
 #include <math.h>
+#include <omp.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
+#include "strategy.h"
 #include "tree.h"
 #include "utils.h"
 
@@ -85,7 +84,9 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points) {
     return (double const **)pt_ptr;
 }
 
-int strategy_main(int argc, char **argv, strategy_t strategy) {
+#undef RANGE
+
+static int strategy_main(int argc, char **argv, strategy_t strategy) {
     double const begin = omp_get_wtime();
 
     ssize_t n_points = 0;
@@ -98,12 +99,16 @@ int strategy_main(int argc, char **argv, strategy_t strategy) {
     tree_t *tree_nodes =
         xcalloc((size_t)(2 * n_points), tree_sizeof());  // FMA initialization
 
+#ifndef PROFILE
     ssize_t n_tree_nodes = tree_build(tree_nodes, points, n_points, strategy);
+#else
+    tree_build(tree_nodes, points, n_points, strategy);
+#endif
 
     fprintf(stderr, "%.1lf\n", omp_get_wtime() - begin);
 
 #ifndef PROFILE
-    tree_print(tree_nodes, 2 * n_points, n_tree_nodes, n_points);
+    tree_print(tree_nodes, 2 * n_points, points, n_tree_nodes, n_points);
 #endif
 
     free((void *)point_values);
