@@ -13,6 +13,8 @@
 
 extern ssize_t N_DIMENSIONS;
 
+static inline void swap_ptr(void **a, void **b);
+
 // ----------------------------------------------------------
 // Aux functions
 // ----------------------------------------------------------
@@ -31,12 +33,48 @@ static inline int cmp_double(void const *a, void const *b) {
     return 0;
 }
 
+static size_t partition_non(double* vec, size_t l, size_t r)
+{
+    size_t i = l;
+    double pivout = vec[r - 1]; // TODO not random
+    for (size_t j = l; j < r; j++) {
+        if (vec[j] <= pivout) {
+            double temp1 = vec[i];
+            double temp2 = vec[j];
+            vec[i] = temp2;
+            vec[j] = temp1;
+            i++;
+        }
+    }
+    double temp1 = vec[i];
+    double temp2 = vec[r - 1];
+    vec[i] = temp2;
+    vec[r-1] = temp1;
+    return i;
+}
+
+static double kth_smallest(double *vec, size_t l, size_t r, size_t k) {
+    // find the partition
+    size_t partition = partition_non(vec, l, r);
+
+    if (partition == k)
+        return vec[partition];
+
+    if (partition > k)
+        return kth_smallest(vec, l, partition - 1, k);
+
+    return kth_smallest(vec, partition + 1, r, k);
+}
+
 // Find the median value of a vector
 //
+// static double find_median(double *vec, ssize_t size) {
+//     qsort(vec, (size_t)size, sizeof(double), cmp_double);
+//     return (size % 2 == 0) ? (vec[(size - 2) / 2] + vec[size / 2]) / 2
+//                            : vec[(size - 1) / 2];
+// }
 static double find_median(double *vec, ssize_t size) {
-    qsort(vec, (size_t)size, sizeof(double), cmp_double);
-    return (size % 2 == 0) ? (vec[(size - 2) / 2] + vec[size / 2]) / 2
-                           : vec[(size - 1) / 2];
+    return kth_smallest(vec, 0, (size_t)size, (size_t)size/2);
 }
 
 // Swap two pointers
