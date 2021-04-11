@@ -79,6 +79,7 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
                : (ssize_t)((size_t)(ptr - base_ptr) / (tree_sizeof()));
 }
 
+
 #ifndef PROFILE
 static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
                        double const **points, ssize_t n_tree_nodes,

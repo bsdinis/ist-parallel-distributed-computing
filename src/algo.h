@@ -33,6 +33,20 @@ static inline int cmp_double(void const *a, void const *b) {
     return 0;
 }
 
+// Finds the max double in a vector
+//
+static double find_max(double* vec, size_t size) {
+    double max = 0.0;
+    for (size_t i = 0; i < size; i++) {
+        if (vec[i] > max) {
+            max = vec[i];
+        }
+    }
+    return max;
+}
+
+// Partitions the vector
+//
 static size_t partition_non(double* vec, size_t l, size_t r)
 {
     size_t i = l;
@@ -53,6 +67,9 @@ static size_t partition_non(double* vec, size_t l, size_t r)
     return i;
 }
 
+// QuickSelect algorithm
+// Finds the kth_smallest index in array
+//
 static double kth_smallest(double *vec, size_t l, size_t r, size_t k) {
     // find the partition
     size_t partition = partition_non(vec, l, r);
@@ -74,7 +91,12 @@ static double kth_smallest(double *vec, size_t l, size_t r, size_t k) {
 //                            : vec[(size - 1) / 2];
 // }
 static double find_median(double *vec, ssize_t size) {
-    return kth_smallest(vec, 0, (size_t)size, (size_t)size/2);
+    size_t k = (size_t)size/2;
+    double median = kth_smallest(vec, 0, (size_t)size, k);
+    if (size % 2 == 0) {
+        median = (median + find_max(vec, k)) / 2;
+    }
+    return median;
 }
 
 // Swap two pointers
