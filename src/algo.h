@@ -33,6 +33,13 @@ static inline int cmp_double(void const *a, void const *b) {
     return 0;
 }
 
+
+static inline void swap_double (double *a, double *b) {
+    double temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
 // Finds the max double in a vector
 //
 static double find_max(double* vec, size_t size) {
@@ -46,12 +53,36 @@ static double find_max(double* vec, size_t size) {
 }
 
 // Partitions the vector
+// using best of three pivout
 //
 static size_t partition_non(double* vec, size_t l, size_t r)
 {
-    size_t i = l;
-    double pivout = vec[r - 1]; // TODO not random
-    for (size_t j = l; j < r; j++) {
+    double *lo = vec;
+    double *hi = &vec[r-1];
+    double *mid = &vec[(l + r)/2];
+
+    // Picks pivout from 3 numbers
+    // leaves the 3 numbers ordered
+    if (*mid < *lo) {
+        swap_double(mid, lo);
+    }
+    if (*hi < *mid) {
+        swap_double(mid, hi);
+        if (*mid < *lo) {
+            swap_double(mid, lo);
+        }
+    }
+
+    if (r - l <= 3) { // already ordered
+        return (size_t)(mid - vec);
+    }
+
+    double pivout = *mid;
+    swap_double(mid, hi-1); //store pivout away
+
+    size_t i = l+1;
+
+    for (size_t j = l+1; j < r-2; j++) { // -2 (pivout and hi)
         if (vec[j] <= pivout) {
             double temp1 = vec[i];
             double temp2 = vec[j];
@@ -61,26 +92,28 @@ static size_t partition_non(double* vec, size_t l, size_t r)
         }
     }
     double temp1 = vec[i];
-    double temp2 = vec[r - 1];
+    double temp2 = vec[r-2];
     vec[i] = temp2;
-    vec[r-1] = temp1;
+    vec[r-2] = temp1;
+
     return i;
 }
 
 // QuickSelect algorithm
 // Finds the kth_smallest index in array
 //
-static double kth_smallest(double *vec, size_t l, size_t r, size_t k) {
+static double qselect(double *vec, size_t l, size_t r, size_t k) {
     // find the partition
+
     size_t partition = partition_non(vec, l, r);
 
-    if (partition == k)
-        return vec[partition];
+    if (partition == k || r - l <= 3)
+        return vec[k];
 
     if (partition > k)
-        return kth_smallest(vec, l, partition - 1, k);
+        return qselect(vec, l, partition, k);
 
-    return kth_smallest(vec, partition + 1, r, k);
+    return qselect(vec, partition + 1, r, k);
 }
 
 // Find the median value of a vector
@@ -92,7 +125,7 @@ static double kth_smallest(double *vec, size_t l, size_t r, size_t k) {
 // }
 static double find_median(double *vec, ssize_t size) {
     size_t k = (size_t)size/2;
-    double median = kth_smallest(vec, 0, (size_t)size, k);
+    double median = qselect(vec, 0, (size_t)size, k);
     if (size % 2 == 0) {
         median = (median + find_max(vec, k)) / 2;
     }
