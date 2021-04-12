@@ -171,9 +171,9 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
             j--;
         }
     }
-    ssize_t m = (r - l) / 2;
+    ssize_t m = (r + l) / 2;
     swap_ptr((void **)&points[l + k],
-             (void **)&points[l + m]);  // ensure medium is on the right set
+             (void **)&points[m]);  // ensure medium is on the right set
 }
 
 // ----------------------------------------------------------
