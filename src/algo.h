@@ -19,20 +19,6 @@ static inline void swap_ptr(void **a, void **b);
 // Aux functions
 // ----------------------------------------------------------
 
-// Compare two doubles in a qsort(3) compatible way
-//
-static inline int cmp_double(void const *a, void const *b) {
-    double a_double = *(double const *)a;
-    double b_double = *(double const *)b;
-    if (a_double < b_double) {
-        return -1;
-    }
-    if (a_double > b_double) {
-        return 1;
-    }
-    return 0;
-}
-
 
 static inline void swap_double (double *a, double *b) {
     double temp = *a;
@@ -53,9 +39,9 @@ static double find_max(double* vec, size_t size) {
 }
 
 // Partitions the vector
-// using best of three pivout
+// using best of three pivot
 //
-static size_t partition_non(double* vec, size_t l, size_t r)
+static size_t partition(double* vec, size_t l, size_t r)
 {
     double *lo = vec;
     double *hi = &vec[r-1];
@@ -105,24 +91,19 @@ static size_t partition_non(double* vec, size_t l, size_t r)
 static double qselect(double *vec, size_t l, size_t r, size_t k) {
     // find the partition
 
-    size_t partition = partition_non(vec, l, r);
+    size_t p = partition(vec, l, r);
 
-    if (partition == k || r - l <= 3)
+    if (p == k || r - l <= 3)
         return vec[k];
 
-    if (partition > k)
-        return qselect(vec, l, partition, k);
+    if (p > k)
+        return qselect(vec, l, p, k);
 
-    return qselect(vec, partition + 1, r, k);
+    return qselect(vec, p + 1, r, k);
 }
 
 // Find the median value of a vector
 //
-// static double find_median(double *vec, ssize_t size) {
-//     qsort(vec, (size_t)size, sizeof(double), cmp_double);
-//     return (size % 2 == 0) ? (vec[(size - 2) / 2] + vec[size / 2]) / 2
-//                            : vec[(size - 1) / 2];
-// }
 static double find_median(double *vec, ssize_t size) {
     size_t k = (size_t)size/2;
     double median = qselect(vec, 0, (size_t)size, k);
