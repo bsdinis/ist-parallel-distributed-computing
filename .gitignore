@@ -9,6 +9,9 @@ ballAlg-mpi
 ballQuery
 ballQuery_pipe
 perf/*
+*.txt
+*opari*
+*.mod.c
 
 .envrc
 # ---> C++

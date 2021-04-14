@@ -67,19 +67,51 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points) {
     //                 with 2^{k+1} leaves and 2^{k + 1} - 2 + 1 inner nodes
     //                 (note the addition of the root).
     //
-    double *pt_arr =
-        xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
-    double **pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);
 
-    // double ** pt_points = xmalloc(sizeof(double*) * (size_t)*n_points );
-
-    for (ssize_t i = 0; i < *n_points; i++) {
-        for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
-            pt_arr[i * (N_DIMENSIONS) + j] =
-                RANGE * ((double)rand()) / RAND_MAX;
+    double *pt_arr = NULL;
+    double **pt_ptr = NULL;
+#pragma omp parallel
+    {
+#pragma omp single nowait
+        {
+            fprintf(stderr, "%d pt_arr\n", omp_get_thread_num());
+            pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
         }
-        pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
+#pragma omp single nowait
+        {
+            fprintf(stderr, "%d pt_ptr\n", omp_get_thread_num());
+            pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);
+        }
     }
+#pragma omp barrier
+
+#pragma omp parallel
+    {
+#pragma omp single nowait
+#pragma omp task
+        {
+            fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
+            for (ssize_t i = 0; i < *n_points; i++) {
+                if (i % 100 == 0) {
+                    fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
+                }
+                for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
+                    pt_arr[i * (N_DIMENSIONS) + j] = RANGE * ((double)rand()) / RAND_MAX;
+                }
+            }
+        }
+
+        {
+            fprintf(stderr, "%d pt_ptr fill\n", omp_get_thread_num());
+#pragma omp parallel for
+            for (ssize_t i = 0; i < *n_points; i++) {
+                fprintf(stderr, "%d pt_ptr fill %zd\n", omp_get_thread_num(), i);
+                pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
+            }
+        }
+    }
+
+#pragma omp barrier
 
     return (double const **)pt_ptr;
 }
