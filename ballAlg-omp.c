@@ -510,6 +510,9 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
                               strategy_t find_points) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
+
+    ////fprintf(stderr, "Me %d %zd\n", omp_get_thread_num(), idx);
+
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
@@ -540,19 +543,22 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
 
     ssize_t l_children = 0;
     ssize_t r_children = 0;
-//#pragma omp parallel sections shared(tree_nodes, points, t, idx, l, m, r, find_points)
     {
-//#pragma omp section
         {
-            //fprintf(stderr, "%d %zd\n", omp_get_thread_num(), idx);
-            l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
+            #pragma omp task
+            {
+                ////fprintf(stderr, "Left %d %zd\n", omp_get_thread_num(), idx);
+                l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
+            }
+            #pragma omp task
+            {
+                ////fprintf(stderr, "Right %d %zd\n", omp_get_thread_num(), idx);
+                r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
+            }
         }
-//#pragma omp section
-        {
-            //fprintf(stderr, "%d %zd\n", omp_get_thread_num(), idx);
-            r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
-        }
+        #pragma omp taskwait
     }
+
 
     return 1 + l_children + r_children;
 }
@@ -561,7 +567,15 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
 //
 static ssize_t tree_build(tree_t *tree_nodes, double const **points,
                           ssize_t n_points, strategy_t find_points) {
-    return tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points);
+    ssize_t result;
+#pragma omp parallel shared(result, tree_nodes, points, n_points, find_points)
+    {
+    #pragma omp single
+        {
+            result = tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points);
+        }
+    }
+    return result;
 }
 
 #ifndef RANGE
@@ -623,12 +637,12 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points) {
     {
 #pragma omp single nowait
         {
-            fprintf(stderr, "%d pt_arr\n", omp_get_thread_num());
+            //fprintf(stderr, "%d pt_arr\n", omp_get_thread_num());
             pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
         }
 #pragma omp single nowait
         {
-            fprintf(stderr, "%d pt_ptr\n", omp_get_thread_num());
+            //fprintf(stderr, "%d pt_ptr\n", omp_get_thread_num());
             pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);
         }
     }
@@ -637,23 +651,20 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points) {
 #pragma omp parallel
     {
 #pragma omp single nowait
-#pragma omp task
         {
-            fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
+            //fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
             for (ssize_t i = 0; i < *n_points; i++) {
-                if (i % 100 == 0) {
-                    fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
-                }
+                //fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
                 for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
                     pt_arr[i * (N_DIMENSIONS) + j] = RANGE * ((double)rand()) / RAND_MAX;
                 }
             }
         }
-         {
-            fprintf(stderr, "%d pt_ptr fill\n", omp_get_thread_num());
+        {
+            //fprintf(stderr, "%d pt_ptr fill\n", omp_get_thread_num());
 #pragma omp for
             for (ssize_t i = 0; i < *n_points; i++) {
-                fprintf(stderr, "%d pt_ptr fill %zd\n", omp_get_thread_num(), i);
+                //fprintf(stderr, "%d pt_ptr fill %zd\n", omp_get_thread_num(), i);
                 pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
             }
         }
