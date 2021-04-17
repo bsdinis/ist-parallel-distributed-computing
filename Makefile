@@ -64,4 +64,4 @@ perf:
 .PHONY: clean
 clean:
 	make -C src clean
-	rm -f ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_centroid ballAlg_random
+	rm -f ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_centroid ballAlg_random ballAlg_x ballAlg-omp

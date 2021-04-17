@@ -24,14 +24,15 @@ ballAlg_centroid: ballAlg_centroid.o
 ballAlg_random: ballAlg_random.o
 
 ballQuery: ballQuery.c
-	$(CC) -O3 -g -DNEBUG -lm $^ -o $@
+	$(CC) -O3 -g -DNEBUG $^ -lm -o $@
 
 ballQuery_pipe: ballQuery_pipe.c
-	$(CC) -O3 -g -DNEBUG -lm $^ -o $@
+	$(CC) -O3 -g -DNEBUG $^ -lm -o $@
 
 ballAlg-omp: ballAlg-omp.c
-	rm opari.rc
-	kinst-ompp $(CC) -openmp $(CFLAGS) $(LDFLAGS) $(LDLIBS) $^ -o $@
+	$(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+#	rm opari.rc
+#	kinst-ompp $(CC) -openmp $(CFLAGS) $(LDFLAGS) $(LDLIBS) $^ -o $@
 
 ballAlg-mpi: ballAlg-mpi.c
 

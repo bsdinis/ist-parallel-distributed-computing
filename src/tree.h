@@ -162,18 +162,20 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
 
     ssize_t l_children = 0;
     ssize_t r_children = 0;
-//#pragma omp parallel sections shared(tree_nodes, points, t, idx, l, m, r, find_points)
     {
-//#pragma omp section
         {
-            //fprintf(stderr, "%d %zd\n", omp_get_thread_num(), idx);
-            l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
+            #pragma omp task
+            {
+                ////fprintf(stderr, "Left %d %zd\n", omp_get_thread_num(), idx);
+                l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
+            }
+            #pragma omp task
+            {
+                ////fprintf(stderr, "Right %d %zd\n", omp_get_thread_num(), idx);
+                r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
+            }
         }
-//#pragma omp section
-        {
-            //fprintf(stderr, "%d %zd\n", omp_get_thread_num(), idx);
-            r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
-        }
+        #pragma omp taskwait
     }
 
     return 1 + l_children + r_children;
@@ -183,5 +185,13 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
 //
 static ssize_t tree_build(tree_t *tree_nodes, double const **points,
                           ssize_t n_points, strategy_t find_points) {
-    return tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points);
+    ssize_t result;
+#pragma omp parallel shared(result, tree_nodes, points, n_points, find_points)
+    {
+    #pragma omp single
+        {
+            result = tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points);
+        }
+    }
+    return result;
 }
