@@ -126,6 +126,10 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 }
 #endif
 
+static void build_node() {
+
+}
+
 // Parallelize
 static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
                               ssize_t idx, ssize_t l, ssize_t r,
@@ -164,16 +168,12 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
     ssize_t r_children = 0;
     {
         {
-            #pragma omp task
+            #pragma omp task if(r - l > 25000) //maybe calculate based on n of points and threads
             {
                 ////fprintf(stderr, "Left %d %zd\n", omp_get_thread_num(), idx);
                 l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
             }
-            #pragma omp task
-            {
-                ////fprintf(stderr, "Right %d %zd\n", omp_get_thread_num(), idx);
-                r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
-            }
+            r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
         }
         #pragma omp taskwait
     }

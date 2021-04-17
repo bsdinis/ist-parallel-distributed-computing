@@ -32,7 +32,7 @@ ballQuery_pipe: ballQuery_pipe.c
 ballAlg-omp: ballAlg-omp.c
 	$(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 #	rm opari.rc
-#	kinst-ompp $(CC) -openmp $(CFLAGS) $(LDFLAGS) $(LDLIBS) $^ -o $@
+#	kinst-ompp $(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 ballAlg-mpi: ballAlg-mpi.c
 
