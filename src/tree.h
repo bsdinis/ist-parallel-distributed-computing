@@ -126,8 +126,31 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 }
 #endif
 
-static void build_node() {
+static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
+                              ssize_t idx, ssize_t l, ssize_t r,
+                              strategy_t find_points);
 
+static ssize_t build_childs_serial(tree_t *tree_nodes, double const **points, ssize_t l_idx, ssize_t r_idx, ssize_t l, ssize_t m, ssize_t r, strategy_t find_points) {
+    return 1 + tree_build_aux(tree_nodes, points, l_idx, l, m, find_points) + tree_build_aux(tree_nodes, points, r_idx, m, r, find_points);
+}
+
+
+static ssize_t build_childs_parallel(tree_t *tree_nodes, double const **points, ssize_t l_idx, ssize_t r_idx, ssize_t l, ssize_t m, ssize_t r, strategy_t find_points) {
+    ssize_t l_children = 0;
+    ssize_t r_children = 0;
+    {
+        {
+            #pragma omp task shared(l_children)
+            {
+                ////fprintf(stderr, "Left %d %zd\n", omp_get_thread_num(), idx);
+                l_children = tree_build_aux(tree_nodes, points, l_idx, l, m, find_points);
+            }
+            r_children = tree_build_aux(tree_nodes, points, r_idx, m, r, find_points);
+        }
+        #pragma omp taskwait
+    }
+
+    return 1 + l_children + r_children;
 }
 
 // Parallelize
@@ -164,21 +187,12 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
     t->t_left = tree_left_node_idx(idx);
     t->t_right = tree_right_node_idx(idx);
 
-    ssize_t l_children = 0;
-    ssize_t r_children = 0;
-    {
-        {
-            #pragma omp task if(r - l > 25000) //maybe calculate based on n of points and threads
-            {
-                ////fprintf(stderr, "Left %d %zd\n", omp_get_thread_num(), idx);
-                l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
-            }
-            r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
-        }
-        #pragma omp taskwait
+    if(r - l > 25000) { //maybe calculate based on n of points and threads
+        return build_childs_parallel(tree_nodes, points, t->t_left, t->t_right, l, m, r, find_points);
     }
-
-    return 1 + l_children + r_children;
+    else {
+        return build_childs_serial(tree_nodes, points, t->t_left, t->t_right, l, m, r, find_points);
+    }
 }
 
 // returns the number of inner nodes (ie: tree_t structs)
