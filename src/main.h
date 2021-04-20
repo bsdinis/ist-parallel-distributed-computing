@@ -107,7 +107,6 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points, tree
 #undef RANGE
 
 static int strategy_main(int argc, char **argv, strategy_t strategy) {
-    omp_set_nested(1);
     double const begin = omp_get_wtime();
 
     tree_t *tree_nodes = NULL;

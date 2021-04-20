@@ -1,5 +1,5 @@
-CC ?= clang
-CXX ?= clang++
+CC ?= gcc
+CXX ?= gcc++
 
 CFLAGS := -fdiagnostics-color=always -Wall -Wextra -Wshadow -Wcast-align -Wunused -Wpedantic -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wvla
 CFLAGS += -Wno-unused-parameter -Wno-unknown-pragmas

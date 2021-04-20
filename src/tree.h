@@ -126,16 +126,18 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 }
 #endif
 
-static ssize_t tree_build_aux_serial(tree_t *tree_nodes, double const **points,
+int N_THREADS = 8;
+
+static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
                               ssize_t idx, ssize_t l, ssize_t r,
-                              strategy_t find_points) {
+                              strategy_t find_points, int ava) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
 
-    divide_point_set_serial(points, l, r, find_points, t->t_center);
+    divide_point_set(points, l, r, find_points, t->t_center);
     t->t_radius = compute_radius(points, l, r, t->t_center);
 
     ssize_t m = (l + r) / 2;
@@ -151,77 +153,38 @@ static ssize_t tree_build_aux_serial(tree_t *tree_nodes, double const **points,
         t->t_left = l;
         t->t_right = tree_right_node_idx(idx);
 
-        return 1 + tree_build_aux_serial(tree_nodes, points, t->t_right, m, r,
-                                  find_points);
+        return 1 + tree_build_aux(tree_nodes, points, t->t_right, m, r,
+                                  find_points, ava);
     }
 
     t->t_type = TREE_TYPE_INNER;
     t->t_left = tree_left_node_idx(idx);
     t->t_right = tree_right_node_idx(idx);
 
-    return 1 + tree_build_aux_serial(tree_nodes, points, t->t_left, l, m, find_points)
-             + tree_build_aux_serial(tree_nodes, points, t->t_right, m, r, find_points);
-}
+    ssize_t l_children;
+    ssize_t r_children;
 
-
-
-// Parallelize
-static ssize_t tree_build_aux_parallel(tree_t *tree_nodes, double const **points,
-                              ssize_t idx, ssize_t l, ssize_t r, ssize_t threshold,
-                              int ava_threads, strategy_t find_points) {
-    assert(r - l > 1, "1-sized trees are out of scope");
-
-    tree_t *t = tree_index_to_ptr(tree_nodes, idx);
-    // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
-    //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
-
-    divide_point_set_parallel(points, l, r, find_points, t->t_center, ava_threads);
-    t->t_radius = compute_radius(points, l, r, t->t_center);
-
-    ssize_t m = (l + r) / 2;
-    if (r - l == 2) {
-        t->t_type = TREE_TYPE_BOTH_LEAF;
-        t->t_left = l;
-        t->t_right = r - 1;
-        return 1;
-    }
-
-    if (r - l == 3) {
-        t->t_type = TREE_TYPE_LEFT_LEAF;
-        t->t_left = l;
-        t->t_right = tree_right_node_idx(idx);
-
-        return 1 + tree_build_aux_serial(tree_nodes, points, t->t_right, m, r,
-                                  find_points);
-    }
-
-    t->t_type = TREE_TYPE_INNER;
-    t->t_left = tree_left_node_idx(idx);
-    t->t_right = tree_right_node_idx(idx);
-
-    ssize_t l_children = 0;
-    ssize_t r_children = 0;
-
-    int next_ava_threads = (ava_threads == 1) ? 1 : ava_threads/2;
-
-    if(r - l > threshold) { //maybe calculate based on n of points and threads
+    if (ava > 0) { // Parallel
+    #pragma omp parallel sections num_threads(2)
         {
+        #pragma omp section
             {
-                #pragma omp task shared(l_children)
-                {
-                    ////fprintf(stderr, "Left %d %zd\n", omp_get_thread_num(), idx);
-                    l_children = tree_build_aux_parallel(tree_nodes, points, t->t_left, l, m, threshold, next_ava_threads, find_points);
-                }
-                r_children = tree_build_aux_parallel(tree_nodes, points, t->t_right, m, r, threshold, next_ava_threads, find_points);
+                //fprintf(stderr, "level: %d | team: %d | id %d | ava: %d\n", omp_get_active_level(), omp_get_team_num(), omp_get_thread_num(), ava - (1 << (omp_get_active_level()-1)));
+                l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, ava - (1 << (omp_get_active_level()-1)));
             }
-            #pragma omp taskwait
-        }
 
+        #pragma omp section
+            {
+                //fprintf(stderr, "level: %d | team: %d | id %d | ava: %d\n", omp_get_active_level(), omp_get_team_num(), omp_get_thread_num(), ava - (1 << (omp_get_active_level()-1)));
+                r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, ava - (1 << (omp_get_active_level()-1)));
+            }
+        }
+    } else { // Serial
+        l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, ava);
+        r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, ava);
     }
-    else {
-        l_children = tree_build_aux_serial(tree_nodes, points, t->t_left, l, m, find_points);
-        r_children = tree_build_aux_serial(tree_nodes, points, t->t_right, m, r, find_points);
-    }
+
+
     return 1 + l_children + r_children;
 }
 
@@ -229,13 +192,6 @@ static ssize_t tree_build_aux_parallel(tree_t *tree_nodes, double const **points
 //
 static ssize_t tree_build(tree_t *tree_nodes, double const **points,
                           ssize_t n_points, strategy_t find_points) {
-    ssize_t result;
-#pragma omp parallel shared(result, tree_nodes, points, n_points, find_points)
-    {
-    #pragma omp single
-        {
-            result = tree_build_aux_parallel(tree_nodes, points, 0, 0, n_points, n_points/omp_get_num_threads()/2, omp_get_num_threads(), find_points);
-        }
-    }
-    return result;
+    omp_set_nested(1);
+    return tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points, N_THREADS-1);
 }

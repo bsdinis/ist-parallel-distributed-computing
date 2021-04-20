@@ -8,7 +8,6 @@
 #include "types.h"
 #include "utils.h"
 
-#include <omp.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -165,11 +164,11 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
 // Divide a point set, finding its center (for the ball algorithm)
 // will reorder the points in the set.
 //
-static void divide_point_set_serial(double const **points, ssize_t l, ssize_t r,
+static void divide_point_set(double const **points, ssize_t l, ssize_t r,
                              strategy_t find_points, double *center) {
     ssize_t a = l;
     ssize_t b = l;
-    double dist = find_points(points, l, r, &a, &b, 1);
+    double dist = find_points(points, l, r, &a, &b);
 
     double const *a_ptr =
         points[a];  // points[a] may change after the partition
@@ -181,48 +180,6 @@ static void divide_point_set_serial(double const **points, ssize_t l, ssize_t r,
     double *products = xmalloc((size_t)(r - l) * 2 * sizeof(double));
     double *products_aux = products + r - l;
 
-    for (ssize_t i = 0; i < r - l; ++i) {
-        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
-        products_aux[i] = products[i];
-    }
-
-    // O(n)
-    double median = find_median(products, (r - l));
-
-    // O(n)
-    partition_on_median(points, l, r, products_aux, median);
-
-    double normalized_median = median / dist;
-    for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
-        center[i] =
-            a_ptr[i] + (b_minus_a[i] *       // NOLINT: this does not see that
-                        normalized_median);  // we fully initialize b_minus_a
-    }
-
-    free(b_minus_a);
-    free(products);
-}
-
-// Divide a point set, finding its center (for the ball algorithm)
-// will reorder the points in the set.
-//
-static void divide_point_set_parallel(double const **points, ssize_t l, ssize_t r,
-                             strategy_t find_points, double *center, int ava_threads) {
-    ssize_t a = l;
-    ssize_t b = l;
-    double dist = find_points(points, l, r, &a, &b, ava_threads);
-
-    double const *a_ptr =
-        points[a];  // points[a] may change after the partition
-    double *b_minus_a = xmalloc((size_t)N_DIMENSIONS * sizeof(double));
-    for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
-        b_minus_a[i] = points[b][i] - points[a][i];
-    }
-
-    double *products = xmalloc((size_t)(r - l) * 2 * sizeof(double));
-    double *products_aux = products + r - l;
-
-#pragma omp parallel for num_threads(ava_threads)
     for (ssize_t i = 0; i < r - l; ++i) {
         products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
         products_aux[i] = products[i];
