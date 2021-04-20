@@ -15,7 +15,7 @@
 // result. it returns the distance between these two points
 //
 typedef double (*strategy_t)(double const **, ssize_t, ssize_t, ssize_t *,
-                             ssize_t *);
+                             ssize_t *, int);
 
 extern ssize_t N_DIMENSIONS;
 
@@ -28,7 +28,7 @@ extern ssize_t N_DIMENSIONS;
 // time = n^2
 //
 static double most_distant(double const **points, ssize_t l, ssize_t r,
-                           ssize_t *a, ssize_t *b) {
+                           ssize_t *a, ssize_t *b, int ava_threads) {
     double max_dist = 0;
     for (ssize_t i = l; i < r - 1; ++i) {
         for (ssize_t j = i + 1; j < r; ++j) {
@@ -50,8 +50,8 @@ static double most_distant(double const **points, ssize_t l, ssize_t r,
 //
 // time = 2*n
 //
-static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
-                                  ssize_t *a, ssize_t *b) {
+static double most_distant_approx_serial(double const **points, ssize_t l, ssize_t r,
+                                  ssize_t *a, ssize_t *b, int ava_threads) {
     double dist_l_a = 0;
     for (ssize_t i = l + 1; i < r; ++i) {
         double dist = distance_squared(points[l], points[i]);
@@ -76,6 +76,35 @@ static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
     return dist_a_b;
 }
 
+static double most_distant_approx_parallel(double const **points, ssize_t l, ssize_t r,
+                                  ssize_t *a, ssize_t *b, int ava_threads) {
+    double dist_l_a = 0;
+    double dist_a_b = 0;
+
+//#pragma omp parallel num_threads(ava_threads)
+    {
+        for (ssize_t i = l + 1; i < r; ++i) {
+            double dist = distance_squared(points[l], points[i]);
+            if (dist > dist_l_a) {
+                dist_l_a = dist;
+                *a = i;
+            }
+        }
+
+        for (ssize_t i = l; i < r; ++i) {
+            if (i == *a) {
+                continue;
+            }
+            double dist = distance_squared(points[*a], points[i]);
+            if (dist > dist_a_b) {
+                dist_a_b = dist;
+                *b = i;
+            }
+        }
+    }
+    return dist_a_b;
+}
+
 // Find the two most distant points approximately using the centroid methon
 // a is the furthest point from the centroid (arith mean of points[l..r])
 // b is the furthes point from a
@@ -83,7 +112,7 @@ static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
 // time = 3*n
 //
 static double most_distant_centroid(double const **points, ssize_t l, ssize_t r,
-                                    ssize_t *a, ssize_t *b) {
+                                    ssize_t *a, ssize_t *b, int ava_threads) {
     double *centroid = xcalloc((size_t)N_DIMENSIONS, sizeof(double));
 
     for (ssize_t d = 0; d < N_DIMENSIONS; d++) {
@@ -122,7 +151,7 @@ static double most_distant_centroid(double const **points, ssize_t l, ssize_t r,
 // Select random points
 //
 static double select_random(double const **points, ssize_t l, ssize_t r,
-                            ssize_t *a, ssize_t *b) {
+                            ssize_t *a, ssize_t *b, int ava_threads) {
     *a = l + (rand() % (r - l));
     // to ensure that *b != *a, we increment *a with a random value in [1,n-1],
     // where n is r - l.
