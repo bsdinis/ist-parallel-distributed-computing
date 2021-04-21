@@ -134,4 +134,3 @@ static double select_random(double const **points, ssize_t l, ssize_t r,
 
 #pragma GCC diagnostic pop
 #pragma clang diagnostic pop
-

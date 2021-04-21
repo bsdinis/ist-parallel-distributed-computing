@@ -20,7 +20,8 @@ ssize_t N_DIMENSIONS = 0;
 #endif  // RANGE
 
 // parse the arguments
-static double const **parse_args(int argc, char *argv[], ssize_t *n_points, tree_t **tree_nodes) {
+static double const **parse_args(int argc, char *argv[], ssize_t *n_points,
+                                 tree_t **tree_nodes) {
     if (argc != 4) {
         KILL("usage: %s <n_dimensions> <n_points> <seed>", argv[0]);
     }
@@ -69,33 +70,37 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points, tree
     //
 
     double **pt_ptr = NULL;
-    double *pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
+    double *pt_arr =
+        xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
 #pragma omp parallel sections shared(pt_arr, pt_ptr, n_points, N_DIMENSIONS)
     {
-    #pragma omp section
+#pragma omp section
         {
-            //fprintf(stderr, "%d pt_arr\n", omp_get_thread_num());
-            //fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
+            // fprintf(stderr, "%d pt_arr\n", omp_get_thread_num());
+            // fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
             for (ssize_t i = 0; i < *n_points; i++) {
-                //fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
+                // fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
                 for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
-                    pt_arr[i * (N_DIMENSIONS) + j] = RANGE * ((double)rand()) / RAND_MAX;
+                    pt_arr[i * (N_DIMENSIONS) + j] =
+                        RANGE * ((double)rand()) / RAND_MAX;
                 }
             }
         }
-    #pragma omp section
+#pragma omp section
         {
-            //fprintf(stderr, "%d pt_ptr\n", omp_get_thread_num());
+            // fprintf(stderr, "%d pt_ptr\n", omp_get_thread_num());
             pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);
             for (ssize_t i = 0; i < *n_points; i++) {
-                //fprintf(stderr, "%d pt_ptr fill %zd\n", omp_get_thread_num(), i);
+                // fprintf(stderr, "%d pt_ptr fill %zd\n", omp_get_thread_num(),
+                // i);
                 pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
             }
             // As discussed, the number of inner nodes is
             // at most the number of leaves of the tree.
             //
-            //fprintf(stderr, "%d tree_nodes\n", omp_get_thread_num());
-            *tree_nodes = xcalloc((size_t)(2 * *n_points), tree_sizeof());  // FMA initialization
+            // fprintf(stderr, "%d tree_nodes\n", omp_get_thread_num());
+            *tree_nodes = xcalloc((size_t)(2 * *n_points),
+                                  tree_sizeof());  // FMA initialization
         }
     }
 

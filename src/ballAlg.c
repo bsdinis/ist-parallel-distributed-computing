@@ -1,5 +1,5 @@
-#include "main.h"
 #include <omp.h>
+#include "main.h"
 
 int main(int argc, char *argv[]) {
     omp_set_num_threads(1);

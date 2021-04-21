@@ -1,9 +1,9 @@
 #pragma once
 
+#include <omp.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
-#include <omp.h>
 
 #include "algo.h"
 #include "strategy.h"
@@ -80,7 +80,6 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
                : (ssize_t)((size_t)(ptr - base_ptr) / (tree_sizeof()));
 }
 
-
 #ifndef PROFILE
 static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
                        double const **points, ssize_t n_tree_nodes,
@@ -126,8 +125,6 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 }
 #endif
 
-int N_THREADS = 8;
-
 static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
                               ssize_t idx, ssize_t l, ssize_t r,
                               strategy_t find_points, int ava) {
@@ -164,26 +161,37 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
     ssize_t l_children;
     ssize_t r_children;
 
-    if (ava > 0) { // Parallel
-    #pragma omp parallel sections num_threads(2)
+    if (ava > 0) {  // Parallel
+#pragma omp parallel sections num_threads(2)
         {
-        #pragma omp section
+#pragma omp section
             {
-                //fprintf(stderr, "level: %d | team: %d | id %d | ava: %d\n", omp_get_active_level(), omp_get_team_num(), omp_get_thread_num(), ava - (1 << (omp_get_active_level()-1)));
-                l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, ava - (1 << (omp_get_active_level()-1)));
+                // fprintf(stderr, "level: %d | team: %d | id %d | ava: %d\n",
+                // omp_get_active_level(), omp_get_team_num(),
+                // omp_get_thread_num(), ava - (1 <<
+                // (omp_get_active_level()-1)));
+                l_children = tree_build_aux(
+                    tree_nodes, points, t->t_left, l, m, find_points,
+                    ava - (1 << (omp_get_active_level() - 1)));
             }
 
-        #pragma omp section
+#pragma omp section
             {
-                //fprintf(stderr, "level: %d | team: %d | id %d | ava: %d\n", omp_get_active_level(), omp_get_team_num(), omp_get_thread_num(), ava - (1 << (omp_get_active_level()-1)));
-                r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, ava - (1 << (omp_get_active_level()-1)));
+                // fprintf(stderr, "level: %d | team: %d | id %d | ava: %d\n",
+                // omp_get_active_level(), omp_get_team_num(),
+                // omp_get_thread_num(), ava - (1 <<
+                // (omp_get_active_level()-1)));
+                r_children = tree_build_aux(
+                    tree_nodes, points, t->t_right, m, r, find_points,
+                    ava - (1 << (omp_get_active_level() - 1)));
             }
         }
-    } else { // Serial
-        l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, ava);
-        r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, ava);
+    } else {  // Serial
+        l_children =
+            tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, 0);
+        r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r,
+                                    find_points, 0);
     }
-
 
     return 1 + l_children + r_children;
 }
@@ -192,6 +200,7 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
 //
 static ssize_t tree_build(tree_t *tree_nodes, double const **points,
                           ssize_t n_points, strategy_t find_points) {
-    omp_set_nested(1);
-    return tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points, N_THREADS-1);
+    omp_set_max_active_levels(omp_get_max_threads());
+    return tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points,
+                          omp_get_max_threads() - 1);
 }

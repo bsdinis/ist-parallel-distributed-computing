@@ -19,8 +19,7 @@ static inline void swap_ptr(void **a, void **b);
 // Aux functions
 // ----------------------------------------------------------
 
-
-static inline void swap_double (double *a, double *b) {
+static inline void swap_double(double *a, double *b) {
     double temp = *a;
     *a = *b;
     *b = temp;
@@ -28,7 +27,7 @@ static inline void swap_double (double *a, double *b) {
 
 // Finds the max double in a vector
 //
-static double find_max(double* vec, size_t size) {
+static double find_max(double *vec, size_t size) {
     double max = 0.0;
     for (size_t i = 0; i < size; i++) {
         if (vec[i] > max) {
@@ -41,11 +40,10 @@ static double find_max(double* vec, size_t size) {
 // Partitions the vector
 // using best of three pivot
 //
-static size_t partition(double* vec, size_t l, size_t r)
-{
+static size_t partition(double *vec, size_t l, size_t r) {
     double *lo = vec;
-    double *hi = &vec[r-1];
-    double *mid = &vec[(l + r)/2];
+    double *hi = &vec[r - 1];
+    double *mid = &vec[(l + r) / 2];
 
     // Picks pivout from 3 numbers
     // leaves the 3 numbers ordered
@@ -59,16 +57,16 @@ static size_t partition(double* vec, size_t l, size_t r)
         }
     }
 
-    if (r - l <= 3) { // already ordered
+    if (r - l <= 3) {  // already ordered
         return (size_t)(mid - vec);
     }
 
     double pivout = *mid;
-    swap_double(mid, hi-1); //store pivout away
+    swap_double(mid, hi - 1);  // store pivout away
 
-    size_t i = l+1;
+    size_t i = l + 1;
 
-    for (size_t j = l+1; j < r-2; j++) { // -2 (pivout and hi)
+    for (size_t j = l + 1; j < r - 2; j++) {  // -2 (pivout and hi)
         if (vec[j] <= pivout) {
             double temp1 = vec[i];
             double temp2 = vec[j];
@@ -78,9 +76,9 @@ static size_t partition(double* vec, size_t l, size_t r)
         }
     }
     double temp1 = vec[i];
-    double temp2 = vec[r-2];
+    double temp2 = vec[r - 2];
     vec[i] = temp2;
-    vec[r-2] = temp1;
+    vec[r - 2] = temp1;
 
     return i;
 }
@@ -93,11 +91,9 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {
 
     size_t p = partition(vec, l, r);
 
-    if (p == k || r - l <= 3)
-        return vec[k];
+    if (p == k || r - l <= 3) return vec[k];
 
-    if (p > k)
-        return qselect(vec, l, p, k);
+    if (p > k) return qselect(vec, l, p, k);
 
     return qselect(vec, p + 1, r, k);
 }
@@ -105,7 +101,7 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {
 // Find the median value of a vector
 //
 static double find_median(double *vec, ssize_t size) {
-    size_t k = (size_t)size/2;
+    size_t k = (size_t)size / 2;
     double median = qselect(vec, 0, (size_t)size, k);
     if (size % 2 == 0) {
         median = (median + find_max(vec, k)) / 2;
@@ -168,6 +164,8 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
                              strategy_t find_points, double *center) {
     ssize_t a = l;
     ssize_t b = l;
+
+    // 2 * n
     double dist = find_points(points, l, r, &a, &b);
 
     double const *a_ptr =
@@ -180,6 +178,7 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
     double *products = xmalloc((size_t)(r - l) * 2 * sizeof(double));
     double *products_aux = products + r - l;
 
+    // n
     for (ssize_t i = 0; i < r - l; ++i) {
         products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
         products_aux[i] = products[i];
