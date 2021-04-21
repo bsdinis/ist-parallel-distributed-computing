@@ -206,7 +206,7 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
 //
 static void tree_build(tree_t *tree_nodes, double const **points,
                        ssize_t n_points, strategy_t find_points) {
-    omp_set_max_active_levels(omp_get_max_threads());
+    omp_set_nested(1);
     tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
                    find_points /* strategy */,
                    omp_get_max_threads() - 1 /* available threads */,

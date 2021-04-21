@@ -9,7 +9,7 @@ OBJECTS=$(SOURCES:.c=.o)
 
 CFLAGS += $(INCLUDES)
 LDLIBS += -lm
-LDLIBS += -fopenmp -lomp
+LDLIBS += -fopenmp # -lomp
 #LDLIBS += -lmpi
 
 CFLAGS += -openmp
