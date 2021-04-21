@@ -184,12 +184,14 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
     if (false && available > 1) {
 #pragma omp parallel for num_threads(available)
         for (ssize_t i = 0; i < r - l; ++i) {
-            products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
+            products[i] =
+                diff_inner_product(points[l + i], points[a], b_minus_a);
             products_aux[i] = products[i];
         }
     } else {
         for (ssize_t i = 0; i < r - l; ++i) {
-            products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
+            products[i] =
+                diff_inner_product(points[l + i], points[a], b_minus_a);
             products_aux[i] = products[i];
         }
     }
