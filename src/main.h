@@ -119,16 +119,12 @@ static int strategy_main(int argc, char **argv, strategy_t strategy) {
     double const **points = parse_args(argc, argv, &n_points, &tree_nodes);
     double const *point_values = points[0];
 
-#ifndef PROFILE
-    ssize_t n_tree_nodes = tree_build(tree_nodes, points, n_points, strategy);
-#else
     tree_build(tree_nodes, points, n_points, strategy);
-#endif
 
     fprintf(stderr, "%.1lf\n", omp_get_wtime() - begin);
 
 #ifndef PROFILE
-    tree_print(tree_nodes, 2 * n_points, points, n_tree_nodes, n_points);
+    tree_print(tree_nodes, 2 * n_points, points, n_points);
 #endif
 
     free((void *)point_values);

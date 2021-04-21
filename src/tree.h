@@ -82,8 +82,23 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
 
 #ifndef PROFILE
 static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
-                       double const **points, ssize_t n_tree_nodes,
-                       ssize_t n_points) {
+                       double const **points, ssize_t n_points) {
+    ssize_t n_tree_nodes = 0;
+    for (ssize_t i = 0; i < tree_size; ++i) {
+        tree_t const *t = tree_index_to_ptr(tree_nodes, i);
+        if (t->t_radius == 0) {
+            continue;
+        }
+
+        n_tree_nodes += 1;
+        if (tree_has_left_leaf(t)) {
+            n_tree_nodes += 1;
+        }
+        if (tree_has_right_leaf(t)) {
+            n_tree_nodes += 1;
+        }
+    }
+
     fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, n_tree_nodes + n_points);
     for (ssize_t i = 0; i < tree_size; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
@@ -125,9 +140,9 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 }
 #endif
 
-static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
-                              ssize_t idx, ssize_t l, ssize_t r,
-                              strategy_t find_points, int ava) {
+static void tree_build_aux(tree_t *tree_nodes, double const **points,
+                           ssize_t idx, ssize_t l, ssize_t r,
+                           strategy_t find_points, ssize_t ava, ssize_t depth) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
@@ -142,7 +157,7 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
         t->t_type = TREE_TYPE_BOTH_LEAF;
         t->t_left = l;
         t->t_right = r - 1;
-        return 1;
+        return;
     }
 
     if (r - l == 3) {
@@ -150,16 +165,14 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
         t->t_left = l;
         t->t_right = tree_right_node_idx(idx);
 
-        return 1 + tree_build_aux(tree_nodes, points, t->t_right, m, r,
-                                  find_points, ava);
+        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, ava,
+                       depth + 1);
+        return;
     }
 
     t->t_type = TREE_TYPE_INNER;
     t->t_left = tree_left_node_idx(idx);
     t->t_right = tree_right_node_idx(idx);
-
-    ssize_t l_children;
-    ssize_t r_children;
 
     if (ava > 0) {  // Parallel
 #pragma omp parallel sections num_threads(2)
@@ -170,9 +183,9 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
                 // omp_get_active_level(), omp_get_team_num(),
                 // omp_get_thread_num(), ava - (1 <<
                 // (omp_get_active_level()-1)));
-                l_children = tree_build_aux(
-                    tree_nodes, points, t->t_left, l, m, find_points,
-                    ava - (1 << (omp_get_active_level() - 1)));
+                tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points,
+                               ava - (1 << (omp_get_active_level() - 1)),
+                               depth + 1);
             }
 
 #pragma omp section
@@ -181,26 +194,26 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
                 // omp_get_active_level(), omp_get_team_num(),
                 // omp_get_thread_num(), ava - (1 <<
                 // (omp_get_active_level()-1)));
-                r_children = tree_build_aux(
+                tree_build_aux(
                     tree_nodes, points, t->t_right, m, r, find_points,
-                    ava - (1 << (omp_get_active_level() - 1)));
+                    ava - (1 << (omp_get_active_level() - 1)), depth + 1);
             }
         }
     } else {  // Serial
-        l_children =
-            tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, 0);
-        r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r,
-                                    find_points, 0);
+        tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, 0,
+                       depth + 1);
+        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, 0,
+                       depth + 1);
     }
-
-    return 1 + l_children + r_children;
 }
 
-// returns the number of inner nodes (ie: tree_t structs)
+// Compute the tree
 //
-static ssize_t tree_build(tree_t *tree_nodes, double const **points,
-                          ssize_t n_points, strategy_t find_points) {
+static void tree_build(tree_t *tree_nodes, double const **points,
+                       ssize_t n_points, strategy_t find_points) {
     omp_set_max_active_levels(omp_get_max_threads());
-    return tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points,
-                          omp_get_max_threads() - 1);
+    tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
+                   find_points /* strategy */,
+                   omp_get_max_threads() - 1 /* available threads */,
+                   0 /* depth */);
 }
