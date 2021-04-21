@@ -1,3 +1,8 @@
+*.eps
+*.png
+*.time
+*.gpi
+*.dat*
 *.tree
 ballAlg
 ballAlg_centroid

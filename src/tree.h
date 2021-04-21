@@ -149,8 +149,10 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
 
-    divide_point_set(points, l, r, find_points, t->t_center);
+    // double const begin = omp_get_wtime();
+    divide_point_set(points, l, r, find_points, t->t_center, ava + 1);
     t->t_radius = compute_radius(points, l, r, t->t_center);
+    // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
 
     ssize_t m = (l + r) / 2;
     if (r - l == 2) {
@@ -179,24 +181,24 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
         {
 #pragma omp section
             {
-                // fprintf(stderr, "level: %d | team: %d | id %d | ava: %d\n",
-                // omp_get_active_level(), omp_get_team_num(),
-                // omp_get_thread_num(), ava - (1 <<
-                // (omp_get_active_level()-1)));
+                /*
+                 fprintf(stderr, "level: %d | team: %d | id %d | ava: %zd\n",
+                 omp_get_active_level(), omp_get_team_num(),
+                 omp_get_thread_num(), ava - (1 << depth));
+                 */
                 tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points,
-                               ava - (1 << (omp_get_active_level() - 1)),
-                               depth + 1);
+                               ava - (1 << (size_t)depth), depth + 1);
             }
 
 #pragma omp section
             {
-                // fprintf(stderr, "level: %d | team: %d | id %d | ava: %d\n",
-                // omp_get_active_level(), omp_get_team_num(),
-                // omp_get_thread_num(), ava - (1 <<
-                // (omp_get_active_level()-1)));
-                tree_build_aux(
-                    tree_nodes, points, t->t_right, m, r, find_points,
-                    ava - (1 << (omp_get_active_level() - 1)), depth + 1);
+                /*
+                 fprintf(stderr, "level: %d | team: %d | id %d | ava: %zd\n",
+                 omp_get_active_level(), omp_get_team_num(),
+                 omp_get_thread_num(), ava - (1 << (size_t)depth));
+                 */
+                tree_build_aux(tree_nodes, points, t->t_right, m, r,
+                               find_points, ava - (1 << depth), depth + 1);
             }
         }
     } else {  // Serial

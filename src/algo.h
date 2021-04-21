@@ -161,15 +161,17 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
 // will reorder the points in the set.
 //
 static void divide_point_set(double const **points, ssize_t l, ssize_t r,
-                             strategy_t find_points, double *center) {
+                             strategy_t find_points, double *center,
+                             ssize_t available) {
     ssize_t a = l;
     ssize_t b = l;
 
     // 2 * n
+    // No point in parallelizing: requires too much synchronization overhead
     double dist = find_points(points, l, r, &a, &b);
 
-    double const *a_ptr =
-        points[a];  // points[a] may change after the partition
+    // points[a] may change after the partition
+    double const *a_ptr = points[a];
     double *b_minus_a = xmalloc((size_t)N_DIMENSIONS * sizeof(double));
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
         b_minus_a[i] = points[b][i] - points[a][i];
@@ -179,15 +181,25 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
     double *products_aux = products + r - l;
 
     // n
-    for (ssize_t i = 0; i < r - l; ++i) {
-        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
-        products_aux[i] = products[i];
+    if (false && available > 1) {
+#pragma omp parallel for num_threads(available)
+        for (ssize_t i = 0; i < r - l; ++i) {
+            products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
+            products_aux[i] = products[i];
+        }
+    } else {
+        for (ssize_t i = 0; i < r - l; ++i) {
+            products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
+            products_aux[i] = products[i];
+        }
     }
 
     // O(n)
+    // No point in parallelizing: requires too much synchronization overhead
     double median = find_median(products, (r - l));
 
     // O(n)
+    // Not possible to parallelize
     partition_on_median(points, l, r, products_aux, median);
 
     double normalized_median = median / dist;
@@ -202,6 +214,10 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 }
 
 // Compute radius of a ball, given its center
+// As this requires synchronization to compute in parallel, we have observed
+// slowdowns from trying to parallelize this.
+//
+// Returns radius
 //
 static double compute_radius(double const **points, ssize_t l, ssize_t r,
                              double const *center) {
