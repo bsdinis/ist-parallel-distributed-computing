@@ -168,7 +168,15 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 
     // 2 * n
     // No point in parallelizing: requires too much synchronization overhead
+
+#ifndef WORST_PARALLEL
     double dist = find_points(points, l, r, &a, &b);
+#else
+    if (available > 1)
+        double dist = most_distant_approx_parallel(points, l, r, &a, &b, available);
+    else
+        double dist = find_points(points, l, r, &a, &b);
+#endif
 
     // points[a] may change after the partition
     double const *a_ptr = points[a];
@@ -225,6 +233,7 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 //
 // Returns radius
 //
+#ifndef WORST_PARALLEL
 static double compute_radius(double const **points, ssize_t l, ssize_t r,
                              double const *center) {
     double max_dist_sq = 0.0;
@@ -237,3 +246,39 @@ static double compute_radius(double const **points, ssize_t l, ssize_t r,
 
     return sqrt(max_dist_sq);
 }
+#else
+static double compute_radius(double const **points, ssize_t l, ssize_t r,
+                             double const *center, ssize_t available) {
+    double max_dist_sq = 0.0;
+    double priv_max_dist_sq = 0.0;
+
+    if (available > 1) {
+    #pragma omp parallel firstprivate(priv_max_dist_sq) shared(max_dist_sq) num_threads(available)
+        {
+        #pragma parallel for nowait
+            for (ssize_t i = l; i < r; i++) {
+                double dist = distance_squared(center, points[i]);
+                if (dist > priv_max_dist_sq) {
+                    priv_max_dist_sq = dist;
+                }
+            }
+        #pragma critical
+            if (priv_max_dist_sq > max_dist_sq) {
+                max_dist_sq = priv_max_dist_sq;
+            }
+        }
+
+    } else {
+
+        double max_dist_sq = 0.0;
+        for (ssize_t i = l; i < r; i++) {
+            double dist = distance_squared(center, points[i]);
+            if (dist > max_dist_sq) {
+                max_dist_sq = dist;
+            }
+        }
+
+    }
+    return sqrt(max_dist_sq);
+}
+#endif

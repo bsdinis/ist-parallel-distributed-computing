@@ -133,6 +133,10 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 }
 #endif
 
+
+//#define WORST_PARALLEL
+//#define ONLY_TREE_PARALLEL
+
 static void tree_build_aux(tree_t *tree_nodes, double const **points,
                            ssize_t idx, ssize_t l, ssize_t r,
                            strategy_t find_points, ssize_t ava, ssize_t depth) {
@@ -144,7 +148,12 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
 
     // double const begin = omp_get_wtime();
     divide_point_set(points, l, r, find_points, t->t_center, ava + 1);
+
+#ifndef WORST_PARALLEL
     t->t_radius = compute_radius(points, l, r, t->t_center);
+#else
+    t->t_radius = compute_radius(points, l, r, t->t_center, ava + 1);
+#endif
     // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
 
     ssize_t m = (l + r) / 2;
