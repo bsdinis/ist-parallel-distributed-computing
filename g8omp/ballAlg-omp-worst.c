@@ -190,7 +190,6 @@ static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
     return dist_a_b;
 }
 
-#ifdef WORST_PARALLEL
 static double most_distant_approx_parallel(double const **points, ssize_t l, ssize_t r,
                                   ssize_t *a, ssize_t *b, ssize_t available) {
     double dist_l_a = 0;
@@ -202,9 +201,10 @@ static double most_distant_approx_parallel(double const **points, ssize_t l, ssi
     ssize_t max_i_b = 0;
     double max_dist_b = 0.0;
 
+
 #pragma omp parallel firstprivate(max_dist_a, max_i_a, max_dist_b, max_i_b) shared(a, dist_l_a, dist_a_b, l, r) num_threads(available)
     {
-    //fprintf(stderr, "%zd %zd %d %d\n", l, r, omp_get_team_num(), omp_get_thread_num());
+    fprintf(stderr, "%zd %zd %d %d\n", l, r, omp_get_team_num(), omp_get_thread_num());
     #pragma omp for nowait
         for (ssize_t i = l + 1; i < r; ++i) {
             double dist = distance_squared(points[l], points[i]);
@@ -242,7 +242,6 @@ static double most_distant_approx_parallel(double const **points, ssize_t l, ssi
 
     return dist_a_b;
 }
-#endif
 
 /**
  * Functions for the algorithm
@@ -466,7 +465,6 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 //
 // Returns radius
 //
-#ifndef WORST_PARALLEL
 static double compute_radius(double const **points, ssize_t l, ssize_t r,
                              double const *center) {
     double max_dist_sq = 0.0;
@@ -479,42 +477,29 @@ static double compute_radius(double const **points, ssize_t l, ssize_t r,
 
     return sqrt(max_dist_sq);
 }
-#else
-static double compute_radius(double const **points, ssize_t l, ssize_t r,
+
+static double compute_radius_par(double const **points, ssize_t l, ssize_t r,
                              double const *center, ssize_t available) {
     double max_dist_sq = 0.0;
     double priv_max_dist_sq = 0.0;
 
-    if (available > 1) {
     #pragma omp parallel firstprivate(priv_max_dist_sq) shared(max_dist_sq) num_threads(available)
-        {
-        #pragma parallel for nowait
-            for (ssize_t i = l; i < r; i++) {
-                double dist = distance_squared(center, points[i]);
-                if (dist > priv_max_dist_sq) {
-                    priv_max_dist_sq = dist;
-                }
-            }
-        #pragma critical
-            if (priv_max_dist_sq > max_dist_sq) {
-                max_dist_sq = priv_max_dist_sq;
-            }
-        }
-
-    } else {
-
-        double max_dist_sq = 0.0;
+    {
+    #pragma parallel for nowait
         for (ssize_t i = l; i < r; i++) {
             double dist = distance_squared(center, points[i]);
-            if (dist > max_dist_sq) {
-                max_dist_sq = dist;
+            if (dist > priv_max_dist_sq) {
+                priv_max_dist_sq = dist;
             }
         }
-
+    #pragma critical
+        if (priv_max_dist_sq > max_dist_sq) {
+            max_dist_sq = priv_max_dist_sq;
+        }
     }
+
     return sqrt(max_dist_sq);
 }
-#endif
 
 /*
  * Tree
@@ -644,6 +629,7 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 static void tree_build_aux(tree_t *tree_nodes, double const **points,
                            ssize_t idx, ssize_t l, ssize_t r,
                            strategy_t find_points, ssize_t ava, ssize_t depth) {
+    //fprintf(stderr, "idx %zd: %zd threads available %d %d\n", idx, ava, omp_get_team_num(), omp_get_team_num());
     assert(r - l > 1, "1-sized trees are out of scope");
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
@@ -653,10 +639,14 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     // double const begin = omp_get_wtime();
     divide_point_set(points, l, r, find_points, t->t_center, ava + 1);
 
-#ifndef WORST_PARALLEL
-    t->t_radius = compute_radius(points, l, r, t->t_center);
+#ifdef WORST_PARALLEL
+    if (ava > 0) {
+        t->t_radius = compute_radius_par(points, l, r, t->t_center, ava + 1);
+    } else {
+        t->t_radius = compute_radius(points, l, r, t->t_center);
+    }
 #else
-    t->t_radius = compute_radius(points, l, r, t->t_center, ava + 1);
+    t->t_radius = compute_radius(points, l, r, t->t_center);
 #endif
     // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
 
