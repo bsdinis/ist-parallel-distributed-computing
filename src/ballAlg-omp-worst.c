@@ -201,10 +201,9 @@ static double most_distant_approx_parallel(double const **points, ssize_t l, ssi
     ssize_t max_i_b = 0;
     double max_dist_b = 0.0;
 
-
 #pragma omp parallel firstprivate(max_dist_a, max_i_a, max_dist_b, max_i_b) shared(a, dist_l_a, dist_a_b, l, r) num_threads(available)
     {
-    fprintf(stderr, "%zd %zd %d %d\n", l, r, omp_get_team_num(), omp_get_thread_num());
+    //fprintf(stderr, "%zd %zd %d %d\n", l, r, omp_get_team_num(), omp_get_thread_num());
     #pragma omp for nowait
         for (ssize_t i = l + 1; i < r; ++i) {
             double dist = distance_squared(points[l], points[i]);
@@ -629,7 +628,6 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 static void tree_build_aux(tree_t *tree_nodes, double const **points,
                            ssize_t idx, ssize_t l, ssize_t r,
                            strategy_t find_points, ssize_t ava, ssize_t depth) {
-    //fprintf(stderr, "idx %zd: %zd threads available %d %d\n", idx, ava, omp_get_team_num(), omp_get_team_num());
     assert(r - l > 1, "1-sized trees are out of scope");
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);

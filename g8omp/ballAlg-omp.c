@@ -185,7 +185,6 @@ static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
     return dist_a_b;
 }
 
-#ifdef WORST_PARALLEL
 static double most_distant_approx_parallel(double const **points, ssize_t l, ssize_t r,
                                   ssize_t *a, ssize_t *b, ssize_t available) {
     double dist_l_a = 0;
@@ -237,7 +236,6 @@ static double most_distant_approx_parallel(double const **points, ssize_t l, ssi
 
     return dist_a_b;
 }
-#endif
 
 /**
  * Functions for the algorithm
@@ -461,7 +459,6 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 //
 // Returns radius
 //
-#ifndef WORST_PARALLEL
 static double compute_radius(double const **points, ssize_t l, ssize_t r,
                              double const *center) {
     double max_dist_sq = 0.0;
@@ -474,13 +471,12 @@ static double compute_radius(double const **points, ssize_t l, ssize_t r,
 
     return sqrt(max_dist_sq);
 }
-#else
-static double compute_radius(double const **points, ssize_t l, ssize_t r,
+
+static double compute_radius_par(double const **points, ssize_t l, ssize_t r,
                              double const *center, ssize_t available) {
     double max_dist_sq = 0.0;
     double priv_max_dist_sq = 0.0;
 
-    if (available > 1) {
     #pragma omp parallel firstprivate(priv_max_dist_sq) shared(max_dist_sq) num_threads(available)
         {
         #pragma parallel for nowait
@@ -496,20 +492,8 @@ static double compute_radius(double const **points, ssize_t l, ssize_t r,
             }
         }
 
-    } else {
-
-        double max_dist_sq = 0.0;
-        for (ssize_t i = l; i < r; i++) {
-            double dist = distance_squared(center, points[i]);
-            if (dist > max_dist_sq) {
-                max_dist_sq = dist;
-            }
-        }
-
-    }
     return sqrt(max_dist_sq);
 }
-#endif
 
 /*
  * Tree
@@ -645,15 +629,19 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
 
-    double const begin = omp_get_wtime();
+    //double const begin = omp_get_wtime();
     divide_point_set(points, l, r, find_points, t->t_center, ava + 1);
 
-#ifndef WORST_PARALLEL
-    t->t_radius = compute_radius(points, l, r, t->t_center);
+#ifdef WORST_PARALLEL
+    if (ava > 0) {
+        t->t_radius = compute_radius_par(points, l, r, t->t_center, ava + 1);
+    } else {
+        t->t_radius = compute_radius(points, l, r, t->t_center);
+    }
 #else
-    t->t_radius = compute_radius(points, l, r, t->t_center, ava + 1);
+    t->t_radius = compute_radius(points, l, r, t->t_center);
 #endif
-    fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
+    // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
 
     ssize_t m = (l + r) / 2;
     if (r - l == 2) {
@@ -825,7 +813,6 @@ static int strategy_main(int argc, char **argv, strategy_t strategy) {
     ssize_t n_points = 0;
     double const **points = parse_args(argc, argv, &n_points, &tree_nodes);
     double const *point_values = points[0];
-    fprintf(stderr, "gen %.12lf\n", omp_get_wtime() - begin);
 
     tree_build(tree_nodes, points, n_points, strategy);
 
