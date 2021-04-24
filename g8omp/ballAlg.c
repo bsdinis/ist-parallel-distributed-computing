@@ -1,18 +1,18 @@
 #include <omp.h>
 #include <math.h>
-#include <stdio.h>
 #include <errno.h>
-#include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 #ifndef ssize_t
 #define ssize_t __ssize_t
 #endif
 
-ssize_t N_DIMENSIONS;
+ssize_t N_DIMENSIONS = 0;
 
 #define xmalloc(size) priv_xmalloc__(__FILE__, __LINE__, size)
 #define xrealloc(ptr, size) priv_xrealloc__(__FILE__, __LINE__, ptr, size)
@@ -100,6 +100,10 @@ void *priv_xcalloc__(char const *file, int lineno, size_t nmemb, size_t size) {
     return ptr;
 }
 
+/***
+ * generic geometric functions
+ */
+
 // ----------------------------------------------------------
 // Distance functions
 // ----------------------------------------------------------
@@ -138,7 +142,9 @@ double inner_product(double const *a, double const *b) {
     return prod;
 }
 
-
+/***
+ * strategies for dividing a set of points.
+ */
 
 // a stratey receives a list of points, a range [l, r[, and out-ptrs for the
 // result. it returns the distance between these two points
@@ -178,7 +184,6 @@ static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
     return dist_a_b;
 }
 
-
 /**
  * Functions for the algorithm
  */
@@ -189,8 +194,7 @@ static inline void swap_ptr(void **a, void **b);
 // Aux functions
 // ----------------------------------------------------------
 
-
-static inline void swap_double (double *a, double *b) {
+static inline void swap_double(double *a, double *b) {
     double temp = *a;
     *a = *b;
     *b = temp;
@@ -198,7 +202,7 @@ static inline void swap_double (double *a, double *b) {
 
 // Finds the max double in a vector
 //
-static double find_max(double* vec, size_t size) {
+static double find_max(double *vec, size_t size) {
     double max = 0.0;
     for (size_t i = 0; i < size; i++) {
         if (vec[i] > max) {
@@ -211,11 +215,10 @@ static double find_max(double* vec, size_t size) {
 // Partitions the vector
 // using best of three pivot
 //
-static size_t partition(double* vec, size_t l, size_t r)
-{
+static size_t partition(double *vec, size_t l, size_t r) {
     double *lo = vec;
-    double *hi = &vec[r-1];
-    double *mid = &vec[(l + r)/2];
+    double *hi = &vec[r - 1];
+    double *mid = &vec[(l + r) / 2];
 
     // Picks pivout from 3 numbers
     // leaves the 3 numbers ordered
@@ -229,16 +232,16 @@ static size_t partition(double* vec, size_t l, size_t r)
         }
     }
 
-    if (r - l <= 3) { // already ordered
+    if (r - l <= 3) {  // already ordered
         return (size_t)(mid - vec);
     }
 
     double pivout = *mid;
-    swap_double(mid, hi-1); //store pivout away
+    swap_double(mid, hi - 1);  // store pivout away
 
-    size_t i = l+1;
+    size_t i = l + 1;
 
-    for (size_t j = l+1; j < r-2; j++) { // -2 (pivout and hi)
+    for (size_t j = l + 1; j < r - 2; j++) {  // -2 (pivout and hi)
         if (vec[j] <= pivout) {
             double temp1 = vec[i];
             double temp2 = vec[j];
@@ -248,9 +251,9 @@ static size_t partition(double* vec, size_t l, size_t r)
         }
     }
     double temp1 = vec[i];
-    double temp2 = vec[r-2];
+    double temp2 = vec[r - 2];
     vec[i] = temp2;
-    vec[r-2] = temp1;
+    vec[r - 2] = temp1;
 
     return i;
 }
@@ -263,11 +266,9 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {
 
     size_t p = partition(vec, l, r);
 
-    if (p == k || r - l <= 3)
-        return vec[k];
+    if (p == k || r - l <= 3) return vec[k];
 
-    if (p > k)
-        return qselect(vec, l, p, k);
+    if (p > k) return qselect(vec, l, p, k);
 
     return qselect(vec, p + 1, r, k);
 }
@@ -275,7 +276,7 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {
 // Find the median value of a vector
 //
 static double find_median(double *vec, ssize_t size) {
-    size_t k = (size_t)size/2;
+    size_t k = (size_t)size / 2;
     double median = qselect(vec, 0, (size_t)size, k);
     if (size % 2 == 0) {
         median = (median + find_max(vec, k)) / 2;
@@ -338,10 +339,13 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
                              strategy_t find_points, double *center) {
     ssize_t a = l;
     ssize_t b = l;
+
+    // 2 * n
+    // No point in parallelizing: requires too much synchronization overhead
     double dist = find_points(points, l, r, &a, &b);
 
-    double const *a_ptr =
-        points[a];  // points[a] may change after the partition
+    // points[a] may change after the partition
+    double const *a_ptr = points[a];
     double *b_minus_a = xmalloc((size_t)N_DIMENSIONS * sizeof(double));
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
         b_minus_a[i] = points[b][i] - points[a][i];
@@ -349,15 +353,19 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 
     double *products = xmalloc((size_t)(r - l) * 2 * sizeof(double));
     double *products_aux = products + r - l;
+
     for (ssize_t i = 0; i < r - l; ++i) {
-        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
+        products[i] =
+            diff_inner_product(points[l + i], points[a], b_minus_a);
         products_aux[i] = products[i];
     }
 
     // O(n)
+    // No point in parallelizing: requires too much synchronization overhead
     double median = find_median(products, (r - l));
 
     // O(n)
+    // Not possible to parallelize
     partition_on_median(points, l, r, products_aux, median);
 
     double normalized_median = median / dist;
@@ -372,6 +380,10 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 }
 
 // Compute radius of a ball, given its center
+// As this requires synchronization to compute in parallel, we have observed
+// slowdowns from trying to parallelize this.
+//
+// Returns radius
 //
 static double compute_radius(double const **points, ssize_t l, ssize_t r,
                              double const *center) {
@@ -386,7 +398,7 @@ static double compute_radius(double const **points, ssize_t l, ssize_t r,
     return sqrt(max_dist_sq);
 }
 
-/**
+/*
  * Tree
  */
 
@@ -458,12 +470,19 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
                : (ssize_t)((size_t)(ptr - base_ptr) / (tree_sizeof()));
 }
 
-
 #ifndef PROFILE
 static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
-                       double const **points, ssize_t n_tree_nodes,
-                       ssize_t n_points) {
-    fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, n_tree_nodes + n_points);
+                       double const **points, ssize_t n_points) {
+    for (ssize_t i = 0; i < tree_size; ++i) {
+        tree_t const *t = tree_index_to_ptr(tree_nodes, i);
+        if (t->t_radius == 0) {
+            continue;
+        }
+
+        n_points++;
+    }
+
+    fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, n_points);
     for (ssize_t i = 0; i < tree_size; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
         if (t->t_radius == 0) {
@@ -504,28 +523,28 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 }
 #endif
 
-// Parallelize
-static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
-                              ssize_t idx, ssize_t l, ssize_t r,
-                              strategy_t find_points) {
+static void tree_build_aux(tree_t *tree_nodes, double const **points,
+                           ssize_t idx, ssize_t l, ssize_t r,
+                           strategy_t find_points) {
     assert(r - l > 1, "1-sized trees are out of scope");
-
-
-    ////fprintf(stderr, "Me %d %zd\n", omp_get_thread_num(), idx);
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
 
+    // double const begin = omp_get_wtime();
     divide_point_set(points, l, r, find_points, t->t_center);
+
     t->t_radius = compute_radius(points, l, r, t->t_center);
+
+    // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
 
     ssize_t m = (l + r) / 2;
     if (r - l == 2) {
         t->t_type = TREE_TYPE_BOTH_LEAF;
         t->t_left = l;
         t->t_right = r - 1;
-        return 1;
+        return;
     }
 
     if (r - l == 3) {
@@ -533,57 +552,35 @@ static ssize_t tree_build_aux(tree_t *tree_nodes, double const **points,
         t->t_left = l;
         t->t_right = tree_right_node_idx(idx);
 
-        return 1 + tree_build_aux(tree_nodes, points, t->t_right, m, r,
-                                  find_points);
+        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
+        return;
     }
 
     t->t_type = TREE_TYPE_INNER;
     t->t_left = tree_left_node_idx(idx);
     t->t_right = tree_right_node_idx(idx);
 
-    ssize_t l_children = 0;
-    ssize_t r_children = 0;
-    {
-        {
-            #pragma omp task
-            {
-                ////fprintf(stderr, "Left %d %zd\n", omp_get_thread_num(), idx);
-                l_children = tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
-            }
-            #pragma omp task
-            {
-                ////fprintf(stderr, "Right %d %zd\n", omp_get_thread_num(), idx);
-                r_children = tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
-            }
-        }
-        #pragma omp taskwait
-    }
-
-
-    return 1 + l_children + r_children;
+    tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
+    tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
 }
 
-// returns the number of inner nodes (ie: tree_t structs)
+// Compute the tree
 //
-static ssize_t tree_build(tree_t *tree_nodes, double const **points,
-                          ssize_t n_points, strategy_t find_points) {
-    ssize_t result;
-#pragma omp parallel shared(result, tree_nodes, points, n_points, find_points)
-    {
-    #pragma omp single
-        {
-            result = tree_build_aux(tree_nodes, points, 0, 0, n_points, find_points);
-        }
-    }
-    return result;
+static void tree_build(tree_t *tree_nodes, double const **points,
+                       ssize_t n_points, strategy_t find_points) {
+    omp_set_nested(1);
+    tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
+                   find_points /* strategy */);
 }
+
 
 #ifndef RANGE
 #define RANGE 10
 #endif  // RANGE
 
 // parse the arguments
-static double const **parse_args(int argc, char *argv[], ssize_t *n_points) {
+static double const **parse_args(int argc, char *argv[], ssize_t *n_points,
+                                 tree_t **tree_nodes) {
     if (argc != 4) {
         KILL("usage: %s <n_dimensions> <n_points> <seed>", argv[0]);
     }
@@ -631,46 +628,26 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points) {
     //                 (note the addition of the root).
     //
 
-    double *pt_arr = NULL;
-    double **pt_ptr = NULL;
-#pragma omp parallel
-    {
-#pragma omp single nowait
-        {
-            //fprintf(stderr, "%d pt_arr\n", omp_get_thread_num());
-            pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
-        }
-#pragma omp single nowait
-        {
-            //fprintf(stderr, "%d pt_ptr\n", omp_get_thread_num());
-            pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);
-        }
-    }
-#pragma omp barrier
+    double **pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);;
+    double *pt_arr =
+        xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
 
-#pragma omp parallel
-    {
-#pragma omp single nowait
-        {
-            //fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
-            for (ssize_t i = 0; i < *n_points; i++) {
-                //fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
-                for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
-                    pt_arr[i * (N_DIMENSIONS) + j] = RANGE * ((double)rand()) / RAND_MAX;
-                }
-            }
-        }
-        {
-            //fprintf(stderr, "%d pt_ptr fill\n", omp_get_thread_num());
-#pragma omp for
-            for (ssize_t i = 0; i < *n_points; i++) {
-                //fprintf(stderr, "%d pt_ptr fill %zd\n", omp_get_thread_num(), i);
-                pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
-            }
+    for (ssize_t i = 0; i < *n_points; i++) {
+        // fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
+        for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
+            pt_arr[i * (N_DIMENSIONS) + j] =
+                RANGE * ((double)rand()) / RAND_MAX;
         }
     }
 
-#pragma omp barrier
+    for (ssize_t i = 0; i < *n_points; i++) {
+        pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
+    }
+    // As discussed, the number of inner nodes is
+    // at most the number of leaves of the tree.
+    //
+    *tree_nodes = xcalloc((size_t)(2 * *n_points),
+                            tree_sizeof());  // FMA initialization
 
     return (double const **)pt_ptr;
 }
@@ -680,26 +657,17 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points) {
 static int strategy_main(int argc, char **argv, strategy_t strategy) {
     double const begin = omp_get_wtime();
 
+    tree_t *tree_nodes = NULL;
     ssize_t n_points = 0;
-    double const **points = parse_args(argc, argv, &n_points);
+    double const **points = parse_args(argc, argv, &n_points, &tree_nodes);
     double const *point_values = points[0];
 
-    // As discussed in parse_args, the number of inner nodes is
-    // at most the number of leaves of the tree.
-    //
-    tree_t *tree_nodes =
-        xcalloc((size_t)(2 * n_points), tree_sizeof());  // FMA initialization
-
-#ifndef PROFILE
-    ssize_t n_tree_nodes = tree_build(tree_nodes, points, n_points, strategy);
-#else
     tree_build(tree_nodes, points, n_points, strategy);
-#endif
 
     fprintf(stderr, "%.1lf\n", omp_get_wtime() - begin);
 
 #ifndef PROFILE
-    tree_print(tree_nodes, 2 * n_points, points, n_tree_nodes, n_points);
+    tree_print(tree_nodes, 2 * n_points, points, n_points);
 #endif
 
     free((void *)point_values);
