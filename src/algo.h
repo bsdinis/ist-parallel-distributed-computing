@@ -2,6 +2,16 @@
  * Functions for the algorithm
  */
 
+#ifndef WORST_PARALLEL
+#define WORST_PARALLEL
+#endif
+
+/*
+#ifndef ONLY_TREE_PARALLEL
+#define ONLY_TREE_PARALLEL
+#endif
+*/
+
 #pragma once
 #include "geometry.h"
 #include "strategy.h"
@@ -172,10 +182,9 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 #ifndef WORST_PARALLEL
     double dist = find_points(points, l, r, &a, &b);
 #else
-    if (available > 1)
-        double dist = most_distant_approx_parallel(points, l, r, &a, &b, available);
-    else
-        double dist = find_points(points, l, r, &a, &b);
+    double dist = (available > 1)
+        ?  most_distant_approx_parallel(points, l, r, &a, &b, available)
+        : find_points(points, l, r, &a, &b);
 #endif
 
     // points[a] may change after the partition

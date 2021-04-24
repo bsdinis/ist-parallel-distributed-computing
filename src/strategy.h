@@ -5,6 +5,16 @@
  * this is sufficient to produce variations in the ball algorithm
  */
 
+#ifndef WORST_PARALLEL
+#define WORST_PARALLEL
+#endif
+
+/*
+#ifndef ONLY_TREE_PARALLEL
+#define ONLY_TREE_PARALLEL
+#endif
+*/
+
 #pragma once
 #include <stdlib.h>
 #include "geometry.h"

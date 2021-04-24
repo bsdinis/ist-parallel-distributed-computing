@@ -134,8 +134,12 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 #endif
 
 
-//#define WORST_PARALLEL
+#define WORST_PARALLEL
 //#define ONLY_TREE_PARALLEL
+
+//#ifndef ONLY_TREE_PARALLEL
+//#define ONLY_TREE_PARALLEL
+//#endif
 
 static void tree_build_aux(tree_t *tree_nodes, double const **points,
                            ssize_t idx, ssize_t l, ssize_t r,
