@@ -6,5 +6,4 @@ set key outside above
 set grid
 set border linewidth 2
 
-plot 'only.dat' using 1:2 with linespoints lt 1 lw 2 title "Tree", 'ours.dat' using 1:2 with linespoints lt 2 lw 2 title "Tree + Projection", 'worst.dat' using 1:2 with linespoints lt 3 lw 2 title "All";
-
+plot 'only.dat' using 1:2 with linespoints lt 1 lw 2   title "Tree", 'ours.dat' using 1:2 with linespoints lt 2 lw 2    title "Tree + Projection", 'worst.dat' using 1:2 with linespoints lt 3 lw 2    title "All";
