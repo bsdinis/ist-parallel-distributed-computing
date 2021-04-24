@@ -9,6 +9,11 @@
 #include <stdbool.h>
 
 
+#ifndef WORST_PARALLEL
+#define WORST_PARALLEL
+#endif
+
+
 #ifndef ssize_t
 #define ssize_t __ssize_t
 #endif

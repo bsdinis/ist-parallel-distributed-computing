@@ -10,6 +10,8 @@ ballAlg_x
 ballAlg_n2
 ballAlg_random
 ballAlg-omp
+ballAlg-omp-worst
+ballAlg-omp-only
 ballAlg-mpi
 ballQuery
 ballQuery_pipe

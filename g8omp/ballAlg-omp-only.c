@@ -9,6 +9,11 @@
 #include <stdbool.h>
 
 
+#ifndef ONLY_TREE_PARALLEL
+#define ONLY_TREE_PARALLEL
+#endif
+
+
 #ifndef ssize_t
 #define ssize_t __ssize_t
 #endif
