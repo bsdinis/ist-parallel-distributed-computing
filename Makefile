@@ -44,7 +44,7 @@ test:
 	ls tests | grep _s | xargs ./sbin/test.sh
 
 test-omp:
-	ls tests | grep _s | xargs ./sbin/test-omp.sh
+	ls tests | grep _ | xargs ./sbin/test-omp.sh
 
 all_tests:
 	./sbin/test.sh
