@@ -1,13 +1,12 @@
-#include <omp.h>
-#include <math.h>
 #include <errno.h>
+#include <math.h>
+#include <omp.h>
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
-
 
 #ifndef ssize_t
 #define ssize_t __ssize_t
@@ -185,8 +184,9 @@ static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
     return dist_a_b;
 }
 
-static double most_distant_approx_parallel(double const **points, ssize_t l, ssize_t r,
-                                  ssize_t *a, ssize_t *b, ssize_t available) {
+static double most_distant_approx_parallel(double const **points, ssize_t l,
+                                           ssize_t r, ssize_t *a, ssize_t *b,
+                                           ssize_t available) {
     double dist_l_a = 0;
     double dist_a_b = 0;
 
@@ -196,10 +196,12 @@ static double most_distant_approx_parallel(double const **points, ssize_t l, ssi
     ssize_t max_i_b = 0;
     double max_dist_b = 0.0;
 
-#pragma omp parallel firstprivate(max_dist_a, max_i_a, max_dist_b, max_i_b) shared(a, dist_l_a, dist_a_b, l, r) num_threads(available)
+#pragma omp parallel firstprivate(max_dist_a, max_i_a, max_dist_b, max_i_b) \
+    shared(a, dist_l_a, dist_a_b, l, r) num_threads(available)
     {
-    //fprintf(stderr, "%zd %zd %d %d\n", l, r, omp_get_team_num(), omp_get_thread_num());
-    #pragma omp for nowait
+// fprintf(stderr, "%zd %zd %d %d\n", l, r, omp_get_team_num(),
+// omp_get_thread_num());
+#pragma omp for nowait
         for (ssize_t i = l + 1; i < r; ++i) {
             double dist = distance_squared(points[l], points[i]);
             if (dist > max_dist_a) {
@@ -207,15 +209,15 @@ static double most_distant_approx_parallel(double const **points, ssize_t l, ssi
                 max_i_a = i;
             }
         }
-    #pragma omp critical
+#pragma omp critical
         if (max_dist_a > dist_l_a) {
             dist_l_a = max_dist_a;
             *a = max_i_a;
         }
 
-    #pragma omp barrier
+#pragma omp barrier
 
-    #pragma omp for nowait
+#pragma omp for nowait
         for (ssize_t i = l; i < r; ++i) {
             if (i == *a) {
                 continue;
@@ -227,7 +229,7 @@ static double most_distant_approx_parallel(double const **points, ssize_t l, ssi
             }
         }
 
-    #pragma omp critical
+#pragma omp critical
         if (max_dist_b > dist_a_b) {
             dist_a_b = max_dist_b;
             *b = max_i_b;
@@ -400,9 +402,9 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
 #ifndef WORST_PARALLEL
     double dist = find_points(points, l, r, &a, &b);
 #else
-    double dist = (available > 1)
-        ?  most_distant_approx_parallel(points, l, r, &a, &b, available)
-        : find_points(points, l, r, &a, &b);
+    double dist = (available > 1) ? most_distant_approx_parallel(
+                                        points, l, r, &a, &b, available)
+                                  : find_points(points, l, r, &a, &b);
 #endif
 
     // points[a] may change after the partition
@@ -473,24 +475,25 @@ static double compute_radius(double const **points, ssize_t l, ssize_t r,
 }
 
 static double compute_radius_par(double const **points, ssize_t l, ssize_t r,
-                             double const *center, ssize_t available) {
+                                 double const *center, ssize_t available) {
     double max_dist_sq = 0.0;
     double priv_max_dist_sq = 0.0;
 
-    #pragma omp parallel firstprivate(priv_max_dist_sq) shared(max_dist_sq) num_threads(available)
-        {
-        #pragma parallel for nowait
-            for (ssize_t i = l; i < r; i++) {
-                double dist = distance_squared(center, points[i]);
-                if (dist > priv_max_dist_sq) {
-                    priv_max_dist_sq = dist;
-                }
-            }
-        #pragma critical
-            if (priv_max_dist_sq > max_dist_sq) {
-                max_dist_sq = priv_max_dist_sq;
+#pragma omp parallel firstprivate(priv_max_dist_sq) shared(max_dist_sq) \
+    num_threads(available)
+    {
+#pragma parallel for nowait
+        for (ssize_t i = l; i < r; i++) {
+            double dist = distance_squared(center, points[i]);
+            if (dist > priv_max_dist_sq) {
+                priv_max_dist_sq = dist;
             }
         }
+#pragma critical
+        if (priv_max_dist_sq > max_dist_sq) {
+            max_dist_sq = priv_max_dist_sq;
+        }
+    }
 
     return sqrt(max_dist_sq);
 }
@@ -629,7 +632,7 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
 
-    //double const begin = omp_get_wtime();
+    // double const begin = omp_get_wtime();
     divide_point_set(points, l, r, find_points, t->t_center, ava + 1);
 
 #ifdef WORST_PARALLEL
@@ -708,7 +711,6 @@ static void tree_build(tree_t *tree_nodes, double const **points,
                    omp_get_max_threads() - 1 /* available threads */,
                    0 /* depth */);
 }
-
 
 #ifndef RANGE
 #define RANGE 10

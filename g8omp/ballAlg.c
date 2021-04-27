@@ -1,12 +1,12 @@
-#include <omp.h>
-#include <math.h>
 #include <errno.h>
+#include <math.h>
+#include <omp.h>
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
 
 #ifndef ssize_t
 #define ssize_t __ssize_t
@@ -355,8 +355,7 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
     double *products_aux = products + r - l;
 
     for (ssize_t i = 0; i < r - l; ++i) {
-        products[i] =
-            diff_inner_product(points[l + i], points[a], b_minus_a);
+        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
         products_aux[i] = products[i];
     }
 
@@ -573,7 +572,6 @@ static void tree_build(tree_t *tree_nodes, double const **points,
                    find_points /* strategy */);
 }
 
-
 #ifndef RANGE
 #define RANGE 10
 #endif  // RANGE
@@ -628,7 +626,8 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points,
     //                 (note the addition of the root).
     //
 
-    double **pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);;
+    double **pt_ptr = xmalloc(sizeof(double *) * (size_t)*n_points);
+    ;
     double *pt_arr =
         xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * (size_t)*n_points);
 
@@ -647,7 +646,7 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points,
     // at most the number of leaves of the tree.
     //
     *tree_nodes = xcalloc((size_t)(2 * *n_points),
-                            tree_sizeof());  // FMA initialization
+                          tree_sizeof());  // FMA initialization
 
     return (double const **)pt_ptr;
 }

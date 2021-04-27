@@ -24,17 +24,11 @@ LDLIBS += -fopenmp # -lomp
 
 CFLAGS += -openmp
 
-all: ballAlg ballAlg-omp ballAlg-omp-worst ballAlg-omp-only
+all: ballAlg ballAlg-omp
 
 ballAlg: ballAlg.o
 
 ballAlg-omp: ballAlg-omp.c
-	$(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
-
-ballAlg-omp-worst: ballAlg-omp-worst.c
-	$(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
-
-ballAlg-omp-only: ballAlg-omp-only.c
 	$(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 .PHONY: fmt
@@ -47,5 +41,5 @@ tidy:
 
 .PHONY: clean
 clean:
-	@rm -f ballAlg ballAlg-omp ballAlg-omp-worst ballAlg-omp-only $(OBJECTS)
+	@rm -f ballAlg ballAlg-omp $(OBJECTS)
 	@rm -f *opari* *.mod.c
