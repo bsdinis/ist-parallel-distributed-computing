@@ -474,10 +474,6 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
 static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
                        double const **points, ssize_t n_points, int id) {
 
-    if (!id) {
-        fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points -1);
-    }
-
     for (ssize_t i = 0; i < tree_size; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
         if (t->t_radius == 0) {
@@ -520,7 +516,8 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 
 static void tree_build_aux(tree_t *tree_nodes, double const **points,
                            ssize_t idx, ssize_t l, ssize_t r,
-                           strategy_t find_points, int id, int p) {
+                           strategy_t find_points, int id, int p,
+                           ssize_t ava, ssize_t depth) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
@@ -552,7 +549,7 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
             t->t_left = l;
             t->t_right = tree_right_node_idx(idx);
 
-            tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p);
+            tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p, ava, depth + 1);
         }
         return;
     }
@@ -562,12 +559,33 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     t->t_right = tree_right_node_idx(idx);
 
     if ( p == 1 ) {
-        tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, id, p);
-        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p);
+
+        if (ava > 0) {  // Parallel
+            #pragma omp parallel sections num_threads(2)
+            {
+                #pragma omp section
+                {
+                    tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, id, p,
+                                ava - (1 << (size_t)depth), depth + 1);
+                }
+
+                #pragma omp section
+                {
+                    tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p,
+                                ava - (1 << depth), depth + 1);
+                }
+            }
+        } else {  // Serial
+            tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, id, p,
+                        0, depth + 1);
+            tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p,
+                        0, depth + 1);
+        }
+
     } else if ( id%p < p/2 ) {
-        tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, id, p/2);
+        tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, id, p/2, ava, 0);
     } else if ( id%p >= p/2) {
-        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p/2);
+        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p/2, ava, 0);
     }
 
 }
@@ -579,7 +597,9 @@ static void tree_build(tree_t *tree_nodes, double const **points,
                        int id, int p) {
     omp_set_nested(1);
     tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
-                   find_points /* strategy */, id, p);
+                   find_points /* strategy */, id, p,
+                   omp_get_max_threads() - 1 /* available threads */,
+                   0 /* depth */);
 }
 
 #ifndef RANGE
@@ -693,10 +713,15 @@ static int strategy_main(int argc, char **argv, strategy_t strategy) {
 
     if (!id) {
         fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
-    }
 
 #ifndef PROFILE
+        fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points -1);
+    }
+
+    MPI_Barrier (MPI_COMM_WORLD); // Allow master to print before starting to print tree
     tree_print(tree_nodes, 2 * n_points, points, n_points, id);
+#else
+    }
 #endif
 
     free((void *)point_values);
