@@ -1,19 +1,19 @@
-CC ?= clang
-CXX ?= clang++
+CC ?= gcc
+CXX ?= gcc++
 
 CFLAGS := -fdiagnostics-color=always -Wall -Wextra -Wshadow -Wcast-align -Wunused -Wpedantic -Wconversion -Wsign-conversion -Wnull-dereference -Wdouble-promotion -Wvla
 CFLAGS += -Wno-unused-parameter -Wno-unknown-pragmas
-CFLAGS += -std=c17
+CFLAGS += -std=c11
 
 ifneq (${PROFILE}, 1)
-	CFLAGS += -fsanitize=address,leak
-	LDFLAGS += -fsanitize=address,leak
+	#CFLAGS += -fsanitize=address,leak
+	#LDFLAGS += -fsanitize=address,leak
 	#CFLAGS += -fsanitize=thread
 	#CFLAGS += -fsanitize=memory
 endif
 
 
-ifeq (${DEBUG}, 0)
+ifeq ($(strip DEBUG), 0)
 	# perf setting
 	CFLAGS += -O3 -DNDEBUG
 else

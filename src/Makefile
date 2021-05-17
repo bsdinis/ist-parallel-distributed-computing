@@ -9,10 +9,12 @@ OBJECTS=$(SOURCES:.c=.o)
 
 CFLAGS += $(INCLUDES)
 LDLIBS += -lm
-LDLIBS += -fopenmp -lomp
+LDLIBS += -fopenmp # -lomp
 #LDLIBS += -lmpi
 
-all: ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_centroid
+CFLAGS += -openmp
+
+all: ballQuery ballQuery_pipe ballAlg ballAlg-omp ballAlg_n2 ballAlg_centroid
 
 -include autodep
 
@@ -22,12 +24,16 @@ ballAlg_centroid: ballAlg_centroid.o
 ballAlg_random: ballAlg_random.o
 
 ballQuery: ballQuery.c
-	$(CC) -O3 -g -DNEBUG -lm $^ -o $@
+	$(CC) -O3 -g -DNEBUG $^ -lm -o $@
 
 ballQuery_pipe: ballQuery_pipe.c
-	$(CC) -O3 -g -DNEBUG -lm $^ -o $@
+	$(CC) -O3 -g -DNEBUG $^ -lm -o $@
 
 ballAlg-omp: ballAlg-omp.c
+	$(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+#	rm opari.rc
+#	kinst-ompp $(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
 ballAlg-mpi: ballAlg-mpi.c
 
 .PHONY: fmt
@@ -41,6 +47,7 @@ tidy:
 .PHONY: clean
 clean:
 	@rm -f ballAlg ballAlg_random ballAlg_n2 ballAlg_centroid ballQuery_pipe ballQuery ballAlg-omp ballAlg-mpi $(OBJECTS)
+	@rm -f *opari* *.mod.c
 
 depend : $(SOURCES)
 	$(CC) $(INCLUDES) -MM $(SOURCES) > autodep

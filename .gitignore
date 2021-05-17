@@ -1,3 +1,8 @@
+*.eps
+*.png
+*.time
+*.gpi
+*.dat*
 *.tree
 ballAlg
 ballAlg_centroid
@@ -5,10 +10,15 @@ ballAlg_x
 ballAlg_n2
 ballAlg_random
 ballAlg-omp
+ballAlg-omp-worst
+ballAlg-omp-only
 ballAlg-mpi
 ballQuery
 ballQuery_pipe
 perf/*
+*.txt
+*opari*
+*.mod.c
 
 .envrc
 # ---> C++

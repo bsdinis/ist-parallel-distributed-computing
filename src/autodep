@@ -1,10 +1,12 @@
-ballAlg.o: ballAlg.c main.h tree.h algo.h geometry.h types.h strategy.h \
-  utils.h
-ballAlg_centroid.o: ballAlg_centroid.c main.h tree.h algo.h geometry.h \
-  types.h strategy.h utils.h
-ballAlg_n2.o: ballAlg_n2.c main.h tree.h algo.h geometry.h types.h \
-  strategy.h utils.h
-ballAlg_random.o: ballAlg_random.c main.h tree.h algo.h geometry.h \
-  types.h strategy.h utils.h
+ballAlg.o: ballAlg.c main.h strategy.h geometry.h types.h utils.h tree.h \
+  algo.h
+ballAlg_centroid.o: ballAlg_centroid.c main.h strategy.h geometry.h \
+  types.h utils.h tree.h algo.h
+ballAlg_n2.o: ballAlg_n2.c main.h strategy.h geometry.h types.h utils.h \
+  tree.h algo.h
+ballAlg-omp.o: ballAlg-omp.c main.h strategy.h geometry.h types.h utils.h \
+  tree.h algo.h
+ballAlg_random.o: ballAlg_random.c main.h strategy.h geometry.h types.h \
+  utils.h tree.h algo.h
 ballQuery.o: ballQuery.c
 ballQuery_pipe.o: ballQuery_pipe.c

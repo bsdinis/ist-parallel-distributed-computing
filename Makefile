@@ -1,4 +1,4 @@
-all: ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_random ballAlg_centroid
+all: ballAlg ballAlg_n2 ballAlg_centroid ballAlg_random ballQuery ballQuery_pipe ballAlg-omp
 
 .PHONY: ballAlg
 ballAlg:
@@ -43,6 +43,9 @@ ballAlg-mpi:
 test:
 	ls tests | grep _s | xargs ./sbin/test.sh
 
+test-omp:
+	ls tests | grep _ | xargs ./sbin/test-omp.sh
+
 all_tests:
 	./sbin/test.sh
 
@@ -61,4 +64,4 @@ perf:
 .PHONY: clean
 clean:
 	make -C src clean
-	rm -f ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_centroid ballAlg_random
+	rm -f ballQuery ballQuery_pipe ballAlg ballAlg_n2 ballAlg_centroid ballAlg_random ballAlg_x ballAlg-omp
