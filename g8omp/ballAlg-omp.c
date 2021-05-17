@@ -573,16 +573,8 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
 #ifndef PROFILE
 static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
                        double const **points, ssize_t n_points) {
-    for (ssize_t i = 0; i < tree_size; ++i) {
-        tree_t const *t = tree_index_to_ptr(tree_nodes, i);
-        if (t->t_radius == 0) {
-            continue;
-        }
 
-        n_points++;
-    }
-
-    fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, n_points);
+    fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points -1);
     for (ssize_t i = 0; i < tree_size; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
         if (t->t_radius == 0) {

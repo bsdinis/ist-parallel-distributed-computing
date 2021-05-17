@@ -474,17 +474,8 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
 static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
                        double const **points, ssize_t n_points, int id) {
 
-    for (ssize_t i = 0; i < tree_size; ++i) {
-        tree_t const *t = tree_index_to_ptr(tree_nodes, i);
-        if (t->t_radius == 0) {
-            continue;
-        }
-
-        n_points++;
-    }
-
     if (!id) {
-        fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, n_points);
+        fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points -1);
     }
 
     for (ssize_t i = 0; i < tree_size; ++i) {
@@ -532,8 +523,6 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
                            strategy_t find_points, int id, int p) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
-    fprintf(stderr, "DNHKAHFSD %d %d\n", id, p);
-
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
@@ -541,24 +530,28 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     // double const begin = omp_get_wtime();
     divide_point_set(points, l, r, find_points, t->t_center);
 
-    t->t_radius = compute_radius(points, l, r, t->t_center);
+    if ( id%p  == 0 ) {
+        t->t_radius = compute_radius(points, l, r, t->t_center);
+    }
 
     // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
 
     ssize_t m = (l + r) / 2;
     if (r - l == 2) {
-        t->t_type = TREE_TYPE_BOTH_LEAF;
-        t->t_left = l;
-        t->t_right = r - 1;
+        if ( id%p  == 0 ) {
+            t->t_type = TREE_TYPE_BOTH_LEAF;
+            t->t_left = l;
+            t->t_right = r - 1;
+        }
         return;
     }
 
     if (r - l == 3) {
-        t->t_type = TREE_TYPE_LEFT_LEAF;
-        t->t_left = l;
-        t->t_right = tree_right_node_idx(idx);
+        if ( id%p  == 0 ) { // Just 1 of each set
+            t->t_type = TREE_TYPE_LEFT_LEAF;
+            t->t_left = l;
+            t->t_right = tree_right_node_idx(idx);
 
-        if ( id%p  == 0 ) {
             tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p);
         }
         return;
@@ -585,7 +578,6 @@ static void tree_build(tree_t *tree_nodes, double const **points,
                        ssize_t n_points, strategy_t find_points,
                        int id, int p) {
     omp_set_nested(1);
-    fprintf(stderr, "DNHKAHFSD %d %d\n", id, p);
     tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
                    find_points /* strategy */, id, p);
 }
@@ -689,8 +681,6 @@ static int strategy_main(int argc, char **argv, strategy_t strategy) {
 
     MPI_Comm_rank (MPI_COMM_WORLD, &id);
     MPI_Comm_size (MPI_COMM_WORLD, &p);
-
-    fprintf(stderr, "DNHKAHFSD %d %d\n", id, p);
 
     MPI_Barrier (MPI_COMM_WORLD);
 
