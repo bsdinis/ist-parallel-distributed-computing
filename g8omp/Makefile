@@ -24,12 +24,15 @@ LDLIBS += -fopenmp # -lomp
 
 CFLAGS += -openmp
 
-all: ballAlg ballAlg-omp
+all: ballAlg ballAlg-omp ballAlg-mpi
 
 ballAlg: ballAlg.o
 
 ballAlg-omp: ballAlg-omp.c
 	$(CC) -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+ballAlg-mpi: ballAlg-mpi.c
+	mpicc -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 .PHONY: fmt
 fmt:
@@ -41,5 +44,5 @@ tidy:
 
 .PHONY: clean
 clean:
-	@rm -f ballAlg ballAlg-omp $(OBJECTS)
+	@rm -f ballAlg ballAlg-omp ballAlg-mpi $(OBJECTS)
 	@rm -f *opari* *.mod.c
