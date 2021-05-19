@@ -514,10 +514,18 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 }
 #endif
 
-static void tree_build_aux(tree_t *tree_nodes, double const **points,
-                           ssize_t idx, ssize_t l, ssize_t r,
-                           strategy_t find_points, int id, int p,
-                           ssize_t ava, ssize_t depth) {
+static void tree_build_aux(
+        tree_t *tree_nodes,      /* set of tree nodes */
+        double const **points,   /* list of points */
+        ssize_t idx,             /* index of this node */
+        ssize_t l,               /* index of the left-most point for this node */
+        ssize_t r,               /* index of the right-most point for this node */
+        strategy_t find_points,  /* strategy to find the points */
+        int id,                  /* mpi proccess id */
+        int p,                   /* number of mpi processes active in this range */
+        ssize_t ava,             /* number of available omp threads */
+        ssize_t depth            /* depth of the local computation */
+        ) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
@@ -711,17 +719,18 @@ static int strategy_main(int argc, char **argv, strategy_t strategy) {
 
     MPI_Barrier (MPI_COMM_WORLD);
 
-    if (!id) {
+    if (id == 0) {
         fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
+    }
 
 #ifndef PROFILE
+    if (id == 0) {
         fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points -1);
     }
 
+    fflush(stdout);
     MPI_Barrier (MPI_COMM_WORLD); // Allow master to print before starting to print tree
     tree_print(tree_nodes, 2 * n_points, points, n_points, id);
-#else
-    }
 #endif
 
     free((void *)point_values);
