@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <math.h>
+#include <mpi.h>
 #include <omp.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -7,13 +8,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mpi.h>
 
 #ifndef ssize_t
 #define ssize_t __ssize_t
 #endif
 
-ssize_t N_DIMENSIONS = 0;
+typedef enum computation_mode_t {
+    // everything fits in memory, no need to MPI it out
+    CM_SINGLE_NODE,
+
+    // a single node does not hold everything in memory
+    CM_DISTRIBUTED,
+} computation_mode_t;
+
+ssize_t N_DIMENSIONS = 0;  // NOLINT
 
 #define xmalloc(size) priv_xmalloc__(__FILE__, __LINE__, size)
 #define xrealloc(ptr, size) priv_xrealloc__(__FILE__, __LINE__, ptr, size)
@@ -143,16 +151,6 @@ double inner_product(double const *a, double const *b) {
     return prod;
 }
 
-/***
- * strategies for dividing a set of points.
- */
-
-// a stratey receives a list of points, a range [l, r[, and out-ptrs for the
-// result. it returns the distance between these two points
-//
-typedef double (*strategy_t)(double const **, ssize_t, ssize_t, ssize_t *,
-                             ssize_t *);
-
 // Find the two most distant points approximately
 // a is the furthest point from points[l]
 // b is the furthes point from a
@@ -203,7 +201,7 @@ static inline void swap_double(double *a, double *b) {
 
 // Finds the max double in a vector
 //
-static double find_max(double *vec, size_t size) {
+static double find_max(double *const vec, size_t size) {
     double max = 0.0;
     for (size_t i = 0; i < size; i++) {
         if (vec[i] > max) {
@@ -262,14 +260,18 @@ static size_t partition(double *vec, size_t l, size_t r) {
 // QuickSelect algorithm
 // Finds the kth_smallest index in array
 //
-static double qselect(double *vec, size_t l, size_t r, size_t k) {
+static double qselect(double *vec, size_t l, size_t r, size_t k) {  // NOLINT
     // find the partition
 
     size_t p = partition(vec, l, r);
 
-    if (p == k || r - l <= 3) return vec[k];
+    if (p == k || r - l <= 3) {
+        return vec[k];
+    }
 
-    if (p > k) return qselect(vec, l, p, k);
+    if (p > k) {
+        return qselect(vec, l, p, k);
+    }
 
     return qselect(vec, p + 1, r, k);
 }
@@ -337,17 +339,17 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
 // will reorder the points in the set.
 //
 static void divide_point_set(double const **points, ssize_t l, ssize_t r,
-                             strategy_t find_points, double *center) {
+                             double *center) {
     ssize_t a = l;
     ssize_t b = l;
 
     // 2 * n
     // No point in parallelizing: requires too much synchronization overhead
-    double dist = find_points(points, l, r, &a, &b);
+    double dist = most_distant_approx(points, l, r, &a, &b);
 
     // points[a] may change after the partition
     double const *a_ptr = points[a];
-    double *b_minus_a = xmalloc((size_t)N_DIMENSIONS * sizeof(double));
+    double b_minus_a[N_DIMENSIONS];
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
         b_minus_a[i] = points[b][i] - points[a][i];
     }
@@ -375,7 +377,6 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
                         normalized_median);  // we fully initialize b_minus_a
     }
 
-    free(b_minus_a);
     free(products);
 }
 
@@ -472,8 +473,7 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
 
 #ifndef PROFILE
 static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
-                       double const **points, ssize_t n_points, int id) {
-
+                       double const **points, int id) {
     for (ssize_t i = 0; i < tree_size; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
         if (t->t_radius == 0) {
@@ -515,17 +515,16 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 #endif
 
 static void tree_build_aux(
-        tree_t *tree_nodes,      /* set of tree nodes */
-        double const **points,   /* list of points */
-        ssize_t idx,             /* index of this node */
-        ssize_t l,               /* index of the left-most point for this node */
-        ssize_t r,               /* index of the right-most point for this node */
-        strategy_t find_points,  /* strategy to find the points */
-        int id,                  /* mpi proccess id */
-        int p,                   /* number of mpi processes active in this range */
-        ssize_t ava,             /* number of available omp threads */
-        ssize_t depth            /* depth of the local computation */
-        ) {
+    tree_t *tree_nodes,    /* set of tree nodes */
+    double const **points, /* list of points */
+    ssize_t idx,           /* index of this node */
+    ssize_t l,             /* index of the left-most point for this node */
+    ssize_t r,             /* index of the right-most point for this node */
+    int id,                /* mpi proccess id */
+    int p,                 /* number of mpi processes active in this range */
+    ssize_t ava,           /* number of available omp threads */
+    ssize_t depth          /* depth of the local computation */
+) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
@@ -533,9 +532,9 @@ static void tree_build_aux(
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
 
     // double const begin = omp_get_wtime();
-    divide_point_set(points, l, r, find_points, t->t_center);
+    divide_point_set(points, l, r, t->t_center);
 
-    if ( id%p  == 0 ) {
+    if (id % p == 0) {
         t->t_radius = compute_radius(points, l, r, t->t_center);
     }
 
@@ -543,7 +542,7 @@ static void tree_build_aux(
 
     ssize_t m = (l + r) / 2;
     if (r - l == 2) {
-        if ( id%p  == 0 ) {
+        if (id % p == 0) {
             t->t_type = TREE_TYPE_BOTH_LEAF;
             t->t_left = l;
             t->t_right = r - 1;
@@ -552,12 +551,13 @@ static void tree_build_aux(
     }
 
     if (r - l == 3) {
-        if ( id%p  == 0 ) { // Just 1 of each set
+        if (id % p == 0) {  // Just 1 of each set
             t->t_type = TREE_TYPE_LEFT_LEAF;
             t->t_left = l;
             t->t_right = tree_right_node_idx(idx);
 
-            tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p, ava, depth + 1);
+            tree_build_aux(tree_nodes, points, t->t_right, m, r, id, p, ava,
+                           depth + 1);
         }
         return;
     }
@@ -566,47 +566,53 @@ static void tree_build_aux(
     t->t_left = tree_left_node_idx(idx);
     t->t_right = tree_right_node_idx(idx);
 
-    if ( p == 1 ) {
-
+    if (p == 1) {
         if (ava > 0) {  // Parallel
-            #pragma omp parallel sections num_threads(2)
+#pragma omp parallel sections num_threads(2)
             {
-                #pragma omp section
+#pragma omp section
                 {
-                    tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, id, p,
-                                ava - (1 << (size_t)depth), depth + 1);
+                    tree_build_aux(tree_nodes, points, t->t_left, l, m, id, p,
+                                   ava - (1 << (size_t)depth), depth + 1);
                 }
 
-                #pragma omp section
+#pragma omp section
                 {
-                    tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p,
-                                ava - (1 << depth), depth + 1);
+                    tree_build_aux(tree_nodes, points, t->t_right, m, r, id, p,
+                                   ava - (1 << depth), depth + 1);
                 }
             }
         } else {  // Serial
-            tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, id, p,
-                        0, depth + 1);
-            tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p,
-                        0, depth + 1);
+            tree_build_aux(tree_nodes, points, t->t_left, l, m, id, p, 0,
+                           depth + 1);
+            tree_build_aux(tree_nodes, points, t->t_right, m, r, id, p, 0,
+                           depth + 1);
         }
 
-    } else if ( id%p < p/2 ) {
-        tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, id, p/2, ava, 0);
-    } else if ( id%p >= p/2) {
-        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, id, p/2, ava, 0);
+    } else if (id % p < p / 2) {
+        tree_build_aux(tree_nodes, points, t->t_left, l, m, id, p / 2, ava, 0);
+    } else if (id % p >= p / 2) {
+        tree_build_aux(tree_nodes, points, t->t_right, m, r, id, p / 2, ava, 0);
     }
-
 }
 
 // Compute the tree
 //
-static void tree_build(tree_t *tree_nodes, double const **points,
-                       ssize_t n_points, strategy_t find_points,
-                       int id, int p) {
+static void tree_build_single(tree_t *tree_nodes, double const **points,
+                              ssize_t n_points) {
     omp_set_nested(1);
     tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
-                   find_points /* strategy */, id, p,
-                   omp_get_max_threads() - 1 /* available threads */,
+                   0, 1, omp_get_max_threads() - 1 /* available threads */,
+                   0 /* depth */);
+}
+
+// Compute the tree
+//
+static void tree_build_dist(tree_t *tree_nodes, double const **points,
+                            ssize_t n_points, int id, int p) {
+    omp_set_nested(1);
+    tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
+                   id, p, omp_get_max_threads() - 1 /* available threads */,
                    0 /* depth */);
 }
 
@@ -616,20 +622,21 @@ static void tree_build(tree_t *tree_nodes, double const **points,
 
 // parse the arguments
 static double const **parse_args(int argc, char *argv[], ssize_t *n_points,
-                                 tree_t **tree_nodes) {
+                                 tree_t **tree_nodes,
+                                 computation_mode_t *c_mode) {
     if (argc != 4) {
-	    MPI_Finalize();
+        MPI_Finalize();
         KILL("usage: %s <n_dimensions> <n_points> <seed>", argv[0]);
     }
 
     errno = 0;
     N_DIMENSIONS = strtoll(argv[1], NULL, 0);
     if (errno != 0) {
-	    MPI_Finalize();
+        MPI_Finalize();
         KILL("failed to parse %s as integer: %s", argv[1], strerror(errno));
     }
     if (N_DIMENSIONS < 2) {
-	    MPI_Finalize();
+        MPI_Finalize();
         KILL("Illegal number of dimensions (%zd), must be above 1.",
              N_DIMENSIONS);
     }
@@ -637,18 +644,18 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points,
     errno = 0;
     *n_points = strtoll(argv[2], NULL, 0);
     if (errno != 0) {
-	    MPI_Finalize();
+        MPI_Finalize();
         KILL("failed to parse %s as integer: %s", argv[2], strerror(errno));
     }
     if (*n_points < 1) {
-	    MPI_Finalize();
+        MPI_Finalize();
         KILL("Illegal number of points (%zd), must be above 0.", *n_points);
     }
 
     errno = 0;
     uint32_t seed = (uint32_t)strtoul(argv[3], NULL, 0);
     if (errno != 0) {
-	    MPI_Finalize();
+        MPI_Finalize();
         KILL("failed to parse %s as integer: %s", argv[3], strerror(errno));
     }
 
@@ -692,56 +699,56 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points,
     *tree_nodes = xcalloc((size_t)(2 * *n_points),
                           tree_sizeof());  // FMA initialization
 
+    *c_mode = CM_SINGLE_NODE;
     return (double const **)pt_ptr;
 }
 
 #undef RANGE
 
-static int strategy_main(int argc, char **argv, strategy_t strategy) {
-    MPI_Status status;
-    tree_t *tree_nodes = NULL;
-    ssize_t n_points = 0;
-    int id, p;
-
-    MPI_Init (&argc, &argv);
-
+int main(int argc, char **argv) {
     double const begin = MPI_Wtime();
+    MPI_Init(&argc, &argv);
 
-    MPI_Comm_rank (MPI_COMM_WORLD, &id);
-    MPI_Comm_size (MPI_COMM_WORLD, &p);
+    int id = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &id);
 
-    MPI_Barrier (MPI_COMM_WORLD);
+    int n_procs = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &n_procs);
 
-    double const **points = parse_args(argc, argv, &n_points, &tree_nodes);
+    ssize_t n_points = 0;
+    tree_t *tree_nodes = NULL;
+    computation_mode_t c_mode = CM_SINGLE_NODE;
+    double const **points =
+        parse_args(argc, argv, &n_points, &tree_nodes, &c_mode);
     double const *point_values = points[0];
 
-    tree_build(tree_nodes, points, n_points, strategy, id, p);
-
-    MPI_Barrier (MPI_COMM_WORLD);
-
-    if (id == 0) {
-        fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
-    }
-
+    switch (c_mode) {
+        case CM_SINGLE_NODE:
+            MPI_Finalize();
+            tree_build_single(tree_nodes, points, n_points);
+            fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
 #ifndef PROFILE
-    if (id == 0) {
-        fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points -1);
-    }
-
-    fflush(stdout);
-    MPI_Barrier (MPI_COMM_WORLD); // Allow master to print before starting to print tree
-    tree_print(tree_nodes, 2 * n_points, points, n_points, id);
+            fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
+            fflush(stdout);
+            tree_print(tree_nodes, 2 * n_points, points, id);
 #endif
+            break;
+        case CM_DISTRIBUTED:
+            MPI_Barrier(MPI_COMM_WORLD);
+            tree_build_dist(tree_nodes, points, n_points, id, n_procs);
+            fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
+            fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
+            fflush(stdout);
+            tree_print(tree_nodes, 2 * n_points, points, id);
+            MPI_Finalize();
+            break;
+        default:
+            __builtin_unreachable();
+    }
 
     free((void *)point_values);
     free(points);
     free(tree_nodes);
 
-    MPI_Finalize();
-
     return 0;
-}
-
-int main(int argc, char *argv[]) {
-    return strategy_main(argc, argv, most_distant_approx);
 }
