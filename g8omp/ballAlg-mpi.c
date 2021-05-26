@@ -470,49 +470,6 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
                : (ssize_t)((size_t)(ptr - base_ptr) / (tree_sizeof()));
 }
 
-#ifndef PROFILE
-static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
-                       double const **points, int proc_id) {
-    for (ssize_t i = 0; i < tree_size; ++i) {
-        tree_t const *t = tree_index_to_ptr(tree_nodes, i);
-        if (t->t_radius == 0) {
-            continue;
-        }
-        /*
-        LOG("printing %zd {\n"
-            "   type:   %d,\n"
-            "   radius: %lf,\n"
-            "   left:   %zd,\n"
-            "   right:  %zd,\n"
-            "}", i, t->t_type, t->t_radius, t->t_left, t->t_right);
-            */
-
-        if (tree_has_left_leaf(t) != 0) {
-            fprintf(stdout, "%zd -1 -1 %.6lf", tree_left_node_idx(i), 0.0);
-            for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(stdout, " %lf", points[t->t_left][j]);
-            }
-            fputc('\n', stdout);
-        }
-
-        if (tree_has_right_leaf(t) != 0) {
-            fprintf(stdout, "%zd -1 -1 %.6lf", tree_right_node_idx(i), 0.0);
-            for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(stdout, " %lf", points[t->t_right][j]);
-            }
-            fputc('\n', stdout);
-        }
-
-        fprintf(stdout, "%zd %zd %zd %.6lf", i, tree_left_node_idx(i),
-                tree_right_node_idx(i), t->t_radius);
-        for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-            fprintf(stdout, " %lf", t->t_center[j]);
-        }
-        fputc('\n', stdout);
-    }
-}
-#endif
-
 static void tree_build_aux(
     tree_t *tree_nodes,     /* set of tree nodes */
     double const **points,  /* list of points */
@@ -612,11 +569,12 @@ static void tree_build_aux(
 // Compute the tree
 //
 static void tree_build_single(tree_t *tree_nodes, double const **points,
-                              double *inner_products, ssize_t n_points) {
+                              double *inner_products, ssize_t n_points,
+                            int proc_id, int n_procs) {
     omp_set_nested(1);
     tree_build_aux(
         tree_nodes, points, inner_products, inner_products + n_points,
-        0 /* idx */, 0 /* l */, n_points /* r */, 0, 1,
+        0 /* idx */, 0 /* l */, n_points /* r */, proc_id, n_procs,
         omp_get_max_threads() - 1 /* available threads */, 0 /* depth */);
 }
 
@@ -635,15 +593,184 @@ static void tree_build_dist(tree_t *tree_nodes, double const **points,
 #endif
 }
 
+#ifndef PROFILE
+static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
+                       double const **points, int proc_id) {
+    for (ssize_t i = 0; i < tree_size; ++i) {
+        tree_t const *t = tree_index_to_ptr(tree_nodes, i);
+        if (t->t_radius == 0) {
+            continue;
+        }
+        /*
+        LOG("printing %zd {\n"
+            "   type:   %d,\n"
+            "   radius: %lf,\n"
+            "   left:   %zd,\n"
+            "   right:  %zd,\n"
+            "}", i, t->t_type, t->t_radius, t->t_left, t->t_right);
+            */
+
+        if (tree_has_left_leaf(t) != 0) {
+            fprintf(stdout, "%zd -1 -1 %.6lf", tree_left_node_idx(i), 0.0);
+            for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
+                fprintf(stdout, " %lf", points[t->t_left][j]);
+            }
+            fputc('\n', stdout);
+        }
+
+        if (tree_has_right_leaf(t) != 0) {
+            fprintf(stdout, "%zd -1 -1 %.6lf", tree_right_node_idx(i), 0.0);
+            for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
+                fprintf(stdout, " %lf", points[t->t_right][j]);
+            }
+            fputc('\n', stdout);
+        }
+
+        fprintf(stdout, "%zd %zd %zd %.6lf", i, tree_left_node_idx(i),
+                tree_right_node_idx(i), t->t_radius);
+        for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
+            fprintf(stdout, " %lf", t->t_center[j]);
+        }
+        fputc('\n', stdout);
+    }
+}
+#endif
+
 #ifndef RANGE
 #define RANGE 10
 #endif  // RANGE
 
+static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32_t seed,
+                            tree_t **tree_nodes, double **inner_products,
+                            computation_mode_t *c_mode) {
+    srand(seed);
+
+    // Lemma: the number of inner nodes, m, will be Theta(n), worst case.
+    // Proof.
+    // 1. m < n: there are more leaves than inner nodes. This is true by
+    // induction, stemming from the fact that there are always 2 childs per
+    // inner node.
+    //
+    // 2. if n == 2^k: m = 2^k - 1.
+    // By induction.
+    // Base: a tree with 2^0 nodes has 0 inner nodes.
+    // Induction Step: consider two trees, each with 2^k nodes.
+    //                 by assumption, they have 2^k - 1 inner nodes.
+    //                 we join them using a root, creating a tree
+    //                 with 2^{k+1} leaves and 2^{k + 1} - 2 + 1 inner nodes
+    //                 (note the addition of the root).
+    //
+
+    // We'll try to fit everything on the same machine.
+    // If it fails, we only need n_points / n_procs
+    *c_mode = CM_SINGLE_NODE;
+    size_t sz_to_alloc = (size_t)n_points;
+
+    double **pt_ptr = malloc(sizeof(double *) * sz_to_alloc);
+    if (pt_ptr == NULL) {
+        if (errno != ENOMEM) {
+            KILL("Failed to allocate (and not due to lack of memory");
+        }
+
+        *c_mode = CM_DISTRIBUTED;
+        sz_to_alloc = ((size_t)n_points) / n_procs;
+        pt_ptr = xmalloc(sizeof(double *) * sz_to_alloc);
+    }
+
+    double *pt_arr =
+        malloc(sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
+    if (pt_arr == NULL) {
+        if (errno != ENOMEM) {
+            KILL("Failed to allocate (and not due to lack of memory");
+        } else if (*c_mode == CM_DISTRIBUTED) {
+            KILL(
+                "Even if we only allocate divided by the number of machines, "
+                "we still OOM-out");
+        }
+
+        *c_mode = CM_DISTRIBUTED;
+        sz_to_alloc = ((size_t)n_points) / n_procs;
+        pt_ptr = xrealloc(pt_ptr, sizeof(double *) * sz_to_alloc);
+        pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
+    }
+
+    *tree_nodes = calloc((size_t)(2 * sz_to_alloc), tree_sizeof());
+    if (*tree_nodes == NULL) {
+        if (errno != ENOMEM) {
+            KILL("Failed to allocate (and not due to lack of memory");
+        } else if (*c_mode == CM_DISTRIBUTED) {
+            KILL(
+                "Even if we only allocate divided by the number of machines, "
+                "we still OOM-out");
+        }
+
+        *c_mode = CM_DISTRIBUTED;
+        sz_to_alloc = ((size_t)n_points) / n_procs;
+        pt_ptr = xrealloc(pt_arr, sizeof(double *) * sz_to_alloc);
+        pt_arr = xrealloc(pt_arr,
+                          sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
+        *tree_nodes = xcalloc((size_t)(2 * sz_to_alloc), tree_sizeof());
+    }
+
+    // We need 2x the number of nodes for inner products
+    // This is because we compute the median in the first half,
+    // and we need the second half to remain still so that we can
+    // then re-order the nodes
+    *inner_products = calloc((size_t)(2 * sz_to_alloc), sizeof(double));
+    if (*inner_products == NULL) {
+        if (errno != ENOMEM) {
+            KILL("Failed to allocate (and not due to lack of memory");
+        } else if (*c_mode == CM_DISTRIBUTED) {
+            KILL(
+                "Even if we only allocate divided by the number of machines, "
+                "we still OOM-out");
+        }
+
+        *c_mode = CM_DISTRIBUTED;
+        sz_to_alloc = ((size_t)n_points) / n_procs;
+        pt_ptr = xrealloc(pt_arr, sizeof(double *) * sz_to_alloc);
+        pt_arr = xrealloc(pt_arr,
+                          sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
+        *tree_nodes =
+            xrealloc(*tree_nodes, (size_t)(2 * sz_to_alloc) * tree_sizeof());
+        *inner_products = xcalloc((size_t)(2 * sz_to_alloc), sizeof(double));
+        memset(tree_nodes, 0, (size_t)(2 * sz_to_alloc) * tree_sizeof());
+    }
+
+    if (*c_mode == CM_SINGLE_NODE) {
+        // As discussed, the number of inner nodes is
+        // at most the number of leaves of the tree.
+        //
+        for (ssize_t i = 0; i < n_points; i++) {
+            // fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
+            for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
+                pt_arr[i * (N_DIMENSIONS) + j] =
+                    RANGE * ((double)rand()) / RAND_MAX;
+            }
+            pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
+        }
+    } else {
+        for (ssize_t i = 0, idx = 0; i < n_points; ++i) {
+            if (i / sz_to_alloc == proc_id) {
+                for (ssize_t j = 0; j < N_DIMENSIONS; j++, idx++) {
+                    pt_arr[idx * (N_DIMENSIONS) + j] =
+                        RANGE * ((double)rand()) / RAND_MAX;
+                }
+                pt_ptr[idx] = &pt_arr[idx * (N_DIMENSIONS)];
+            } else {
+                rand();
+            }
+        }
+    }
+
+    return (double const **)pt_ptr;
+}
+
+#undef RANGE
+
 // parse the arguments
-static double const **parse_args(int argc, char *argv[], int proc_id,
-                                 int n_procs, ssize_t *n_points,
-                                 tree_t **tree_nodes, double **inner_products,
-                                 computation_mode_t *c_mode) {
+static void parse_args(int argc, char *argv[], int proc_id,
+                      int n_procs, ssize_t *n_points, uint32_t * seed) {
     if (argc != 4) {
         KILL("usage: %s <n_dimensions> <n_points> <seed>", argv[0]);
     }
@@ -668,135 +795,11 @@ static double const **parse_args(int argc, char *argv[], int proc_id,
     }
 
     errno = 0;
-    uint32_t seed = (uint32_t)strtoul(argv[3], NULL, 0);
+    *seed = (uint32_t)strtoul(argv[3], NULL, 0);
     if (errno != 0) {
         KILL("failed to parse %s as integer: %s", argv[3], strerror(errno));
     }
-
-    srand(seed);
-
-    // Lemma: the number of inner nodes, m, will be Theta(n), worst case.
-    // Proof.
-    // 1. m < n: there are more leaves than inner nodes. This is true by
-    // induction, stemming from the fact that there are always 2 childs per
-    // inner node.
-    //
-    // 2. if n == 2^k: m = 2^k - 1.
-    // By induction.
-    // Base: a tree with 2^0 nodes has 0 inner nodes.
-    // Induction Step: consider two trees, each with 2^k nodes.
-    //                 by assumption, they have 2^k - 1 inner nodes.
-    //                 we join them using a root, creating a tree
-    //                 with 2^{k+1} leaves and 2^{k + 1} - 2 + 1 inner nodes
-    //                 (note the addition of the root).
-    //
-
-    // We'll try to fit everything on the same machine.
-    // If it fails, we only need n_points / n_procs
-    *c_mode = CM_SINGLE_NODE;
-    size_t sz_to_alloc = (size_t)*n_points;
-
-    double **pt_ptr = malloc(sizeof(double *) * sz_to_alloc);
-    if (pt_ptr == NULL) {
-        if (errno != ENOMEM) {
-            KILL("Failed to allocate (and not due to lack of memory");
-        }
-
-        *c_mode = CM_DISTRIBUTED;
-        sz_to_alloc = ((size_t)*n_points) / n_procs;
-        pt_ptr = xmalloc(sizeof(double *) * sz_to_alloc);
-    }
-
-    double *pt_arr =
-        malloc(sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
-    if (pt_arr == NULL) {
-        if (errno != ENOMEM) {
-            KILL("Failed to allocate (and not due to lack of memory");
-        } else if (*c_mode == CM_DISTRIBUTED) {
-            KILL(
-                "Even if we only allocate divided by the number of machines, "
-                "we still OOM-out");
-        }
-
-        *c_mode = CM_DISTRIBUTED;
-        sz_to_alloc = ((size_t)*n_points) / n_procs;
-        pt_ptr = xrealloc(pt_ptr, sizeof(double *) * sz_to_alloc);
-        pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
-    }
-
-    *tree_nodes = calloc((size_t)(2 * sz_to_alloc), tree_sizeof());
-    if (*tree_nodes == NULL) {
-        if (errno != ENOMEM) {
-            KILL("Failed to allocate (and not due to lack of memory");
-        } else if (*c_mode == CM_DISTRIBUTED) {
-            KILL(
-                "Even if we only allocate divided by the number of machines, "
-                "we still OOM-out");
-        }
-
-        *c_mode = CM_DISTRIBUTED;
-        sz_to_alloc = ((size_t)*n_points) / n_procs;
-        pt_ptr = xrealloc(pt_arr, sizeof(double *) * sz_to_alloc);
-        pt_arr = xrealloc(pt_arr,
-                          sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
-        *tree_nodes = xcalloc((size_t)(2 * sz_to_alloc), tree_sizeof());
-    }
-
-    // We need 2x the number of nodes for inner products
-    // This is because we compute the median in the first half,
-    // and we need the second half to remain still so that we can
-    // then re-order the nodes
-    *inner_products = calloc((size_t)(2 * sz_to_alloc), sizeof(double));
-    if (*inner_products == NULL) {
-        if (errno != ENOMEM) {
-            KILL("Failed to allocate (and not due to lack of memory");
-        } else if (*c_mode == CM_DISTRIBUTED) {
-            KILL(
-                "Even if we only allocate divided by the number of machines, "
-                "we still OOM-out");
-        }
-
-        *c_mode = CM_DISTRIBUTED;
-        sz_to_alloc = ((size_t)*n_points) / n_procs;
-        pt_ptr = xrealloc(pt_arr, sizeof(double *) * sz_to_alloc);
-        pt_arr = xrealloc(pt_arr,
-                          sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
-        *tree_nodes =
-            xrealloc(*tree_nodes, (size_t)(2 * sz_to_alloc) * tree_sizeof());
-        *inner_products = xcalloc((size_t)(2 * sz_to_alloc), sizeof(double));
-        memset(tree_nodes, 0, (size_t)(2 * sz_to_alloc) * tree_sizeof());
-    }
-
-    if (*c_mode == CM_SINGLE_NODE) {
-        // As discussed, the number of inner nodes is
-        // at most the number of leaves of the tree.
-        //
-        for (ssize_t i = 0; i < *n_points; i++) {
-            // fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
-            for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
-                pt_arr[i * (N_DIMENSIONS) + j] =
-                    RANGE * ((double)rand()) / RAND_MAX;
-            }
-            pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
-        }
-    } else {
-        for (ssize_t i = 0, idx = 0; i < *n_points; ++i) {
-            if (i / sz_to_alloc == proc_id) {
-                for (ssize_t j = 0; j < N_DIMENSIONS; j++, idx++) {
-                    pt_arr[idx * (N_DIMENSIONS) + j] =
-                        RANGE * ((double)rand()) / RAND_MAX;
-                }
-                pt_ptr[idx] = &pt_arr[idx * (N_DIMENSIONS)];
-            } else {
-                rand();
-            }
-        }
-    }
-
-    return (double const **)pt_ptr;
 }
-
-#undef RANGE
 
 int main(int argc, char **argv) {
     double const begin = MPI_Wtime();
@@ -808,12 +811,15 @@ int main(int argc, char **argv) {
     int n_procs = 0;
     MPI_Comm_size(MPI_COMM_WORLD, &n_procs);
 
+    uint32_t seed = 0;
     ssize_t n_points = 0;
+    parse_args(argc, argv, proc_id, n_procs, &n_points, &seed);
+
     tree_t *tree_nodes = NULL;
     double *inner_products = NULL;
     computation_mode_t c_mode = CM_SINGLE_NODE;
-    double const **points = parse_args(argc, argv, proc_id, n_procs, &n_points,
-                                       &tree_nodes, &inner_products, &c_mode);
+    double const **points = alocate(proc_id, n_procs, n_points, seed,
+                                    &tree_nodes, &inner_products, &c_mode);
     double const *point_values = points[0];
 
     LOG("allocated");
@@ -821,24 +827,34 @@ int main(int argc, char **argv) {
     MPI_Barrier(MPI_COMM_WORLD);
     switch (c_mode) {
         case CM_SINGLE_NODE:
-            KILL("single mode");
-            tree_build_single(tree_nodes, points, inner_products, n_points);
-            fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
+            LOG("single mode %d", proc_id);
+            tree_build_single(tree_nodes, points, inner_products, n_points,
+                            proc_id, n_procs);
+
+            MPI_Barrier(MPI_COMM_WORLD);
+            if (proc_id == 0) {
+                fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
+            }
 #ifndef PROFILE
-            fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
-            fflush(stdout);
+            if (proc_id == 0) {
+                fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
+            }
+            MPI_Barrier(MPI_COMM_WORLD);
             tree_print(tree_nodes, 2 * n_points, points, proc_id);
 #endif
             break;
         case CM_DISTRIBUTED:
-            KILL("distributed mode");
+            LOG("distributed mode %d", proc_id);
             tree_build_dist(tree_nodes, points, inner_products, n_points,
                             proc_id, n_procs);
             fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
-            fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
-            fflush(stdout);
+#ifndef PROFILE
+            if (proc_id == 0) {
+                fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
+            }
+            MPI_Barrier(MPI_COMM_WORLD);
             tree_print(tree_nodes, 2 * n_points, points, proc_id);
-            MPI_Finalize();
+#endif
             break;
         default:
             __builtin_unreachable();
