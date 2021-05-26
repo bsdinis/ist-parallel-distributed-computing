@@ -27,7 +27,6 @@ ssize_t N_DIMENSIONS = 0;
         __builtin_unreachable();                                 \
     }
 
-
 #define WARN(...)                                                \
     {                                                            \
         fprintf(stderr, "[WARN]  %s:%d | ", __FILE__, __LINE__); \
@@ -278,10 +277,8 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {
 static double find_median(double *vec, ssize_t size) {
     size_t k = (size_t)size / 2;
     double median = qselect(vec, 0, (size_t)size, k);
-    LOG("finding median: %6.6lf | size:%zd k:%zd", median, size, k);
     if (size % 2 == 0) {
         median = (median + find_max(vec, k)) / 2;
-        LOG("correction: %6.6lf", median);
     }
     return median;
 }
@@ -304,7 +301,6 @@ static inline void swap_ptr(void **a, void **b) {
 //
 static void partition_on_median(double const **points, ssize_t l, ssize_t r,
                                 double const *products, double median) {
-    LOG("pom: %4zd %4zd %6.6lf", l, r, median);
     ssize_t i = 0;
     ssize_t j = r - l - 1;
     ssize_t k = (r - l) / 2;
@@ -329,7 +325,6 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
     ssize_t m = (r + l) / 2;
     swap_ptr((void **)&points[l + k],
              (void **)&points[m]);  // ensure medium is on the right set
-    LOG("end: %4zd %4zd %4zd", l, r, l + k);
 }
 
 // ----------------------------------------------------------
@@ -358,34 +353,18 @@ static void divide_point_set(double const **points, ssize_t l, ssize_t r,
     double *products = xmalloc((size_t)(r - l) * 2 * sizeof(double));
     double *products_aux = products + r - l;
 
-    char * buffer = xcalloc(1 << 14, sizeof(char));
-    size_t off = 0;
     for (ssize_t i = 0; i < r - l; ++i) {
         products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
         products_aux[i] = products[i];
-        off += sprintf(buffer + off, "%6.6lf, ", products[i]);
     }
-    sprintf(buffer + off, "\n");
-    fputs(buffer, stderr);
-    fflush(stderr);
 
     // O(n)
     // No point in parallelizing: requires too much synchronization overhead
     double median = find_median(products, (r - l));
 
-    off = 0;
-    for (ssize_t i = 0; i < r - l; ++i) {
-        off += sprintf(buffer + off, "%6.6lf, ", products[i]);
-    }
-    sprintf(buffer + off, "\n");
-    fputs(buffer, stderr);
-    fflush(stderr);
-    free(buffer);
-
     // O(n)
     // Not possible to parallelize
     partition_on_median(points, l, r, products_aux, median);
-
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
