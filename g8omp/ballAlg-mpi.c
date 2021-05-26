@@ -737,7 +737,17 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
         memset(tree_nodes, 0, (size_t)(2 * sz_to_alloc) * tree_sizeof());
     }
 
+    // If able to do single do it (but what if all can?)
+
+    // Distributed -> check if not any single
+
     if (*c_mode == CM_SINGLE_NODE) {
+
+        // ALl are single?
+            // Yes -> do multiple singles
+            // Not all -> do just me but only one can print (what now?)
+
+
         // As discussed, the number of inner nodes is
         // at most the number of leaves of the tree.
         //
@@ -750,6 +760,10 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
             pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
         }
     } else {
+        // MPI_IRecv -> check if any single
+            // Yes -> do nothing
+            // No -> work
+
         for (ssize_t i = 0, idx = 0; i < n_points; ++i) {
             if (i / sz_to_alloc == proc_id) {
                 for (ssize_t j = 0; j < N_DIMENSIONS; j++, idx++) {
