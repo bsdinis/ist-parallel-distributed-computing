@@ -271,7 +271,7 @@ static double find_max(double *vec, size_t size) {
 // using best of three pivot
 //
 static size_t partition(double *vec, size_t l, size_t r) {
-    double *lo = vec;
+    double *lo = &vec[l];
     double *hi = &vec[r - 1];
     double *mid = &vec[(l + r) / 2];
 

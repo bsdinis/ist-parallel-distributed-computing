@@ -218,7 +218,7 @@ static double find_max(double *const vec, ssize_t l, ssize_t r) {
 // using best of three pivot
 //
 static size_t partition(double *vec, size_t l, size_t r) {
-    double *lo = vec;
+    double *lo = &vec[l];
     double *hi = &vec[r - 1];
     double *mid = &vec[(l + r) / 2];
 
@@ -282,11 +282,11 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {  // NOLINT
 // Find the median value of a vector
 //
 static double find_median(double *vec, ssize_t l, ssize_t r) {
-    size_t k = (size_t)(r - l) / 2;
+    size_t k = (size_t)(r + l) / 2;
     double median = qselect(vec, l, r, k);
-    LOG("finding median: %6.6lf", median);
+    LOG("finding median: %6.6lf | l:%zd r:%zd size:%zd k:%zd", median, l, r, r-l, k);
     if ((r - l) % 2 == 0) {
-        median = (median + find_max(vec, l, l + k)) / 2;
+        median = (median + find_max(vec, l, k)) / 2;
         LOG("correction: %6.6lf", median);
     }
     return median;
@@ -375,10 +375,6 @@ static void divide_point_set(double const **points, double *inner_products,
     // No point in parallelizing: requires too much synchronization overhead
     double median = find_median(inner_products, l, r);
 
-    // O(n)
-    // Not possible in parallelizing
-    partition_on_median(points, inner_products_aux, l, r, median);
-
     off = 0;
     for (ssize_t i = l; i < r; ++i) {
         off += sprintf(buffer + off, "%6.6lf, ", inner_products[i]);
@@ -387,6 +383,10 @@ static void divide_point_set(double const **points, double *inner_products,
     fputs(buffer, stderr);
     fflush(stderr);
     free(buffer);
+
+    // O(n)
+    // Not possible in parallelizing
+    partition_on_median(points, inner_products_aux, l, r, median);
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
