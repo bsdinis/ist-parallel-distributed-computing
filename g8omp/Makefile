@@ -34,6 +34,17 @@ ballAlg-omp: ballAlg-omp.c
 ballAlg-mpi: ballAlg-mpi.c
 	mpicc -openmp $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
+.PHONY: ballQuery_pipe
+ballQuery_pipe:
+	make -C ../src ballQuery_pipe
+	cp ../src/ballQuery_pipe .
+
+test: ballQuery_pipe
+	ls tests | grep _s | xargs ./sbin/test.sh
+
+all_tests:
+	./sbin/test.sh
+
 .PHONY: fmt
 fmt:
 	@clang-format -i -style=file $(SOURCES)

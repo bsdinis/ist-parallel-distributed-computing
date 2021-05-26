@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <math.h>
 #include <mpi.h>
+#include <time.h>
 #include <omp.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -14,11 +15,14 @@
 #endif
 
 typedef enum computation_mode_t {
-    // everything fits in memory, no need to MPI it out
+    // everything fits in memory, we have all nodes with the whole dataset
     CM_SINGLE_NODE,
 
     // a single node does not hold everything in memory
     CM_DISTRIBUTED,
+
+    // there are other nodes that can fit everything in memory, just do nothing
+    CM_PASSIVE,
 } computation_mode_t;
 
 ssize_t N_DIMENSIONS = 0;  // NOLINT
@@ -562,7 +566,7 @@ static void tree_build_aux(
                        t->t_left, l, m, proc_id, n_procs / 2, ava, 0);
     } else if (proc_id % n_procs >= n_procs / 2) {
         tree_build_aux(tree_nodes, points, inner_products, inner_products_aux,
-                       t->t_right, m, r, proc_id, n_procs / 2, ava, 0);
+                       t->t_right, m, r, proc_id, (n_procs + 1)/ 2, ava, 0);
     }
 }
 
@@ -616,6 +620,7 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
                 fprintf(stdout, " %lf", points[t->t_left][j]);
             }
             fputc('\n', stdout);
+            fflush(stdout);
         }
 
         if (tree_has_right_leaf(t) != 0) {
@@ -624,6 +629,7 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
                 fprintf(stdout, " %lf", points[t->t_right][j]);
             }
             fputc('\n', stdout);
+            fflush(stdout);
         }
 
         fprintf(stdout, "%zd %zd %zd %.6lf", i, tree_left_node_idx(i),
@@ -632,6 +638,7 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
             fprintf(stdout, " %lf", t->t_center[j]);
         }
         fputc('\n', stdout);
+        fflush(stdout);
     }
 }
 #endif
@@ -640,11 +647,9 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 #define RANGE 10
 #endif  // RANGE
 
-static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32_t seed,
+static double const **allocate(int * proc_id, int * n_procs, ssize_t n_points, uint32_t seed,
                             tree_t **tree_nodes, double **inner_products,
                             computation_mode_t *c_mode) {
-    srand(seed);
-
     // Lemma: the number of inner nodes, m, will be Theta(n), worst case.
     // Proof.
     // 1. m < n: there are more leaves than inner nodes. This is true by
@@ -666,6 +671,14 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
     *c_mode = CM_SINGLE_NODE;
     size_t sz_to_alloc = (size_t)n_points;
 
+    if (false) {
+        *c_mode = CM_DISTRIBUTED;
+        size_t sz_to_alloc = (size_t)n_points / *n_procs;
+    }
+
+
+    srand(seed);
+
     double **pt_ptr = malloc(sizeof(double *) * sz_to_alloc);
     if (pt_ptr == NULL) {
         if (errno != ENOMEM) {
@@ -673,7 +686,7 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
         }
 
         *c_mode = CM_DISTRIBUTED;
-        sz_to_alloc = ((size_t)n_points) / n_procs;
+        sz_to_alloc = ((size_t)n_points) / *n_procs;
         pt_ptr = xmalloc(sizeof(double *) * sz_to_alloc);
     }
 
@@ -689,7 +702,7 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
         }
 
         *c_mode = CM_DISTRIBUTED;
-        sz_to_alloc = ((size_t)n_points) / n_procs;
+        sz_to_alloc = ((size_t)n_points) / *n_procs;
         pt_ptr = xrealloc(pt_ptr, sizeof(double *) * sz_to_alloc);
         pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
     }
@@ -705,7 +718,7 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
         }
 
         *c_mode = CM_DISTRIBUTED;
-        sz_to_alloc = ((size_t)n_points) / n_procs;
+        sz_to_alloc = ((size_t)n_points) / *n_procs;
         pt_ptr = xrealloc(pt_arr, sizeof(double *) * sz_to_alloc);
         pt_arr = xrealloc(pt_arr,
                           sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
@@ -727,7 +740,7 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
         }
 
         *c_mode = CM_DISTRIBUTED;
-        sz_to_alloc = ((size_t)n_points) / n_procs;
+        sz_to_alloc = ((size_t)n_points) / *n_procs;
         pt_ptr = xrealloc(pt_arr, sizeof(double *) * sz_to_alloc);
         pt_arr = xrealloc(pt_arr,
                           sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
@@ -737,17 +750,44 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
         memset(tree_nodes, 0, (size_t)(2 * sz_to_alloc) * tree_sizeof());
     }
 
-    // If able to do single do it (but what if all can?)
+    /***
+     * - All distributed
+     * - 1+ single: drop all non-singles, compute as single
+     ***/
 
-    // Distributed -> check if not any single
+
+    bool mine[*n_procs];
+    memset(mine, *c_mode == CM_SINGLE_NODE, sizeof(mine));
+    bool single[*n_procs];
+    memset(single, false, sizeof(single));
+    MPI_Alltoall(mine, 1, MPI_C_BOOL, single, 1, MPI_C_BOOL, MPI_COMM_WORLD);
+
+    int id_off = 0;
+    int n_off = 0;
+    for (int i = 0; i < *n_procs; i++) {
+        if (!single[i]) {
+            if (i < *proc_id) {
+                id_off += 1;
+            }
+            n_off += 1;
+        }
+    }
+
+    if (n_off < *n_procs) {
+        if (*c_mode == CM_DISTRIBUTED) {
+            *c_mode = CM_PASSIVE;
+            free(pt_arr);
+            free(pt_ptr);
+            free(*tree_nodes);
+            free(*inner_products);
+            *proc_id = -1;
+        } else {
+            *proc_id -= id_off;
+        }
+        *n_procs -= n_off;
+    }
 
     if (*c_mode == CM_SINGLE_NODE) {
-
-        // ALl are single?
-            // Yes -> do multiple singles
-            // Not all -> do just me but only one can print (what now?)
-
-
         // As discussed, the number of inner nodes is
         // at most the number of leaves of the tree.
         //
@@ -759,13 +799,9 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
             }
             pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
         }
-    } else {
-        // MPI_IRecv -> check if any single
-            // Yes -> do nothing
-            // No -> work
-
+    } else if (*c_mode == CM_DISTRIBUTED) {
         for (ssize_t i = 0, idx = 0; i < n_points; ++i) {
-            if (i / sz_to_alloc == proc_id) {
+            if (i / sz_to_alloc == *proc_id) {
                 for (ssize_t j = 0; j < N_DIMENSIONS; j++, idx++) {
                     pt_arr[idx * (N_DIMENSIONS) + j] =
                         RANGE * ((double)rand()) / RAND_MAX;
@@ -783,8 +819,7 @@ static double const **alocate(int proc_id, int n_procs, ssize_t n_points, uint32
 #undef RANGE
 
 // parse the arguments
-static void parse_args(int argc, char *argv[], int proc_id,
-                      int n_procs, ssize_t *n_points, uint32_t * seed) {
+static void parse_args(int argc, char *argv[], ssize_t *n_points, uint32_t * seed) {
     if (argc != 4) {
         KILL("usage: %s <n_dimensions> <n_points> <seed>", argv[0]);
     }
@@ -827,58 +862,62 @@ int main(int argc, char **argv) {
 
     uint32_t seed = 0;
     ssize_t n_points = 0;
-    parse_args(argc, argv, proc_id, n_procs, &n_points, &seed);
+    parse_args(argc, argv, &n_points, &seed);
 
     tree_t *tree_nodes = NULL;
     double *inner_products = NULL;
     computation_mode_t c_mode = CM_SINGLE_NODE;
-    double const **points = alocate(proc_id, n_procs, n_points, seed,
-                                    &tree_nodes, &inner_products, &c_mode);
+    int old_id = proc_id;
+    double const **points = allocate(&proc_id, &n_procs, n_points, seed, &tree_nodes, &inner_products, &c_mode);
     double const *point_values = points[0];
-
-    LOG("allocated");
 
     MPI_Barrier(MPI_COMM_WORLD);
     switch (c_mode) {
         case CM_SINGLE_NODE:
-            LOG("single mode %d", proc_id);
             tree_build_single(tree_nodes, points, inner_products, n_points,
                             proc_id, n_procs);
 
-            MPI_Barrier(MPI_COMM_WORLD);
-            if (proc_id == 0) {
-                fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
-            }
-#ifndef PROFILE
-            if (proc_id == 0) {
-                fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
-            }
-            MPI_Barrier(MPI_COMM_WORLD);
-            tree_print(tree_nodes, 2 * n_points, points, proc_id);
-#endif
             break;
         case CM_DISTRIBUTED:
-            LOG("distributed mode %d", proc_id);
+            KILL("distributed mode (%d->%d)/%d", old_id, proc_id, n_procs);
             tree_build_dist(tree_nodes, points, inner_products, n_points,
                             proc_id, n_procs);
-            fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
-#ifndef PROFILE
-            if (proc_id == 0) {
-                fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
-            }
-            MPI_Barrier(MPI_COMM_WORLD);
-            tree_print(tree_nodes, 2 * n_points, points, proc_id);
-#endif
+            break;
+        case CM_PASSIVE:
+            LOG("passive mode %d->%d", old_id, proc_id);
             break;
         default:
             __builtin_unreachable();
     }
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (proc_id == 0) {
+        fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
+        fflush(stderr);
+#ifndef PROFILE
+        fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
+        fflush(stdout);
+        tree_print(tree_nodes, 2 * n_points, points, proc_id);
+        fflush(stdout);
+#endif
+    }
+
+#ifndef PROFILE
+    for (int pid = 1; pid < n_procs; ++pid) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (proc_id == pid) {
+            tree_print(tree_nodes, 2 * n_points, points, proc_id);
+        }
+    }
+#endif
     MPI_Finalize();
 
-    free((void *)point_values);
-    free(points);
-    free(inner_products);
-    free(tree_nodes);
+    if (proc_id >= 0) {
+        free((void *)point_values);
+        free(points);
+        free(inner_products);
+        free(tree_nodes);
+    }
 
     return 0;
 }
