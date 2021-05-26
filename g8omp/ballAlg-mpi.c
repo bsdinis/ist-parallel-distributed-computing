@@ -32,17 +32,17 @@ ssize_t N_DIMENSIONS = 0;  // NOLINT
         fprintf(stderr, "[ERROR] %s:%d | ", __FILE__, __LINE__); \
         fprintf(stderr, __VA_ARGS__);                            \
         fputc('\n', stderr);                                     \
+        fflush(stderr); \
         exit(EXIT_FAILURE);                                      \
         __builtin_unreachable();                                 \
     }
-
-#ifndef NDEBUG
 
 #define WARN(...)                                                \
     {                                                            \
         fprintf(stderr, "[WARN]  %s:%d | ", __FILE__, __LINE__); \
         fprintf(stderr, __VA_ARGS__);                            \
         fputc('\n', stderr);                                     \
+        fflush(stderr); \
     }
 
 #define LOG(...)                                                 \
@@ -50,7 +50,10 @@ ssize_t N_DIMENSIONS = 0;  // NOLINT
         fprintf(stderr, "[LOG]   %s:%d | ", __FILE__, __LINE__); \
         fprintf(stderr, __VA_ARGS__);                            \
         fputc('\n', stderr);                                     \
+        fflush(stderr); \
     }
+#ifndef NDEBUG
+
 
 #endif /* NDEBUG */
 
@@ -201,9 +204,9 @@ static inline void swap_double(double *a, double *b) {
 
 // Finds the max double in a vector
 //
-static double find_max(double *const vec, size_t size) {
+static double find_max(double *const vec, ssize_t l, ssize_t r) {
     double max = 0.0;
-    for (size_t i = 0; i < size; i++) {
+    for (size_t i = l; i < r; i++) {
         if (vec[i] > max) {
             max = vec[i];
         }
@@ -278,11 +281,13 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {  // NOLINT
 
 // Find the median value of a vector
 //
-static double find_median(double *vec, ssize_t size) {
-    size_t k = (size_t)size / 2;
-    double median = qselect(vec, 0, (size_t)size, k);
-    if (size % 2 == 0) {
-        median = (median + find_max(vec, k)) / 2;
+static double find_median(double *vec, ssize_t l, ssize_t r) {
+    size_t k = (size_t)(r - l) / 2;
+    double median = qselect(vec, l, r, k);
+    LOG("finding median: %6.6lf", median);
+    if ((r - l) % 2 == 0) {
+        median = (median + find_max(vec, l, l + k)) / 2;
+        LOG("correction: %6.6lf", median);
     }
     return median;
 }
@@ -303,11 +308,11 @@ static inline void swap_ptr(void **a, void **b) {
 // Partition a set of points based on the median value (in the products array).
 // This reorders the points in the [l, r[ range.
 //
-static void partition_on_median(double const **points, ssize_t l, ssize_t r,
-                                double const *products, double median) {
-    ssize_t i = 0;
-    ssize_t j = r - l - 1;
-    ssize_t k = (r - l) / 2;
+static void partition_on_median(double const **points, double const *products, ssize_t l, ssize_t r, double median) {
+    LOG("pom: %4zd %4zd %6.6lf", l, r, median);
+    ssize_t i = l;
+    ssize_t j = r - 1;
+    ssize_t k = l + (r - l) / 2;
     while (i < j) {
         while (i < j && products[i] < median) {
             i++;
@@ -321,14 +326,14 @@ static void partition_on_median(double const **points, ssize_t l, ssize_t r,
             } else if (products[j] == median) {
                 k = i;
             }
-            swap_ptr((void **)&points[l + i], (void **)&points[l + j]);
+            swap_ptr((void **)&points[i], (void **)&points[j]);
             i++;
             j--;
         }
     }
     ssize_t m = (r + l) / 2;
-    swap_ptr((void **)&points[l + k],
-             (void **)&points[m]);  // ensure medium is on the right set
+    swap_ptr((void **)&points[k], (void **)&points[m]);  // ensure median is on the right set
+    LOG("end: %4zd %4zd %4zd", l, r, k);
 }
 
 // ----------------------------------------------------------
@@ -355,21 +360,33 @@ static void divide_point_set(double const **points, double *inner_products,
         b_minus_a[i] = points[b][i] - points[a][i];
     }
 
-    double *products = inner_products + l;
-    double *products_aux = inner_products_aux + l;
-
-    for (ssize_t i = 0; i < r - l; ++i) {
-        products[i] = diff_inner_product(points[l + i], points[a], b_minus_a);
-        products_aux[i] = products[i];
+    char * buffer = xcalloc(1 << 14, sizeof(char));
+    size_t off = 0;
+    for (ssize_t i = l; i < r; ++i) {
+        inner_products[i] = diff_inner_product(points[i], points[a], b_minus_a);
+        inner_products_aux[i] = inner_products[i];
+        off += sprintf(buffer + off, "%6.6lf, ", inner_products[i]);
     }
+    sprintf(buffer + off, "\n");
+    fputs(buffer, stderr);
+    fflush(stderr);
 
     // O(n)
     // No point in parallelizing: requires too much synchronization overhead
-    double median = find_median(products, (r - l));
+    double median = find_median(inner_products, l, r);
 
     // O(n)
-    // Not possible to parallelize
-    partition_on_median(points, l, r, products_aux, median);
+    // Not possible in parallelizing
+    partition_on_median(points, inner_products_aux, l, r, median);
+
+    off = 0;
+    for (ssize_t i = l; i < r; ++i) {
+        off += sprintf(buffer + off, "%6.6lf, ", inner_products[i]);
+    }
+    sprintf(buffer + off, "\n");
+    fputs(buffer, stderr);
+    fflush(stderr);
+    free(buffer);
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
