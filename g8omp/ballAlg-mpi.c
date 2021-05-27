@@ -608,12 +608,14 @@ static inline ssize_t tree_right_node_idx(ssize_t parent, ssize_t n_points) {
     return parent + n_points / 2;
 }
 
-static inline ssize_t tree_leaf_idx(ssize_t index, ssize_t n_points) {
-    return index + n_points - 1;
+// given an index , get the id
+static inline ssize_t tree_leaf_idx_to_id(ssize_t index, ssize_t n_points, ssize_t off) {
+    return index + off + n_points;
 }
 
-static inline ssize_t tree_leaf_idx_to_index(ssize_t idx, ssize_t n_points) {
-    return idx + 1 - n_points;
+// given an id , get the index
+static inline ssize_t tree_leaf_id_to_idx(ssize_t id, ssize_t n_points, ssize_t off) {
+    return id - off - n_points;
 }
 
 // Calling sizeof(tree_t) is always wrong, because tree nodes have an FMA
@@ -650,102 +652,144 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
                : (ssize_t)((size_t)(ptr - base_ptr) / (tree_sizeof()));
 }
 
-static void tree_build_single_aux(
-    tree_t *tree_nodes,     /* set of tree nodes */
-    double const **points,  /* list of points */
-    ssize_t n_points,       /* number of of points */
-    double *inner_products, /* list of inner products: preallocated to make sure
-                               this function is no-alloc */
-    double *inner_products_aux, /* list of auxiliar inner products: preallocated
-                                   to make sure this function is no-alloc */
-    ssize_t idx,                /* index of this node */
-    ssize_t l,                  /* index of the left-most point for this node */
-    ssize_t r,    /* index of the right-most point for this node */
-    int proc_id,  /* mpi proccess id */
-    int n_procs,  /* number of mpi processes active in this range */
-    ssize_t ava,  /* number of available omp threads */
-    ssize_t depth /* depth of the local computation */
-) {
-    assert(r - l > 1, "1-sized trees are out of scope");
+typedef struct tree_builder_t {
+	// set of tree nodes
+    tree_t *tree_nodes;
 
-    tree_t *t = tree_index_to_ptr(tree_nodes, idx);
-    // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
-    //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
+	// list of points
+    double const **points;
+
+	// number of points
+    ssize_t n_points;
+
+	// number of local points
+    ssize_t n_local_points;
+
+	// list of inner products: preallocated to make sure this function is no-alloc
+    double *inner_products;
+
+	// list of auxiliar inner products: preallocated to make sure this function is no-alloc
+    double *inner_products_aux;
+
+	// index of this node
+    ssize_t idx;
+
+	// index of the left-most point for this node
+    ssize_t l;
+
+	// index of the right-most point for this node
+    ssize_t r;
+
+	// id of the first point on this node
+    ssize_t index_offset;
+
+	// mpi proccess id in the communication group
+    int proc_id;
+
+	// number of mpi processes active in this communication group
+    int n_procs;
+
+	// communication group
+    MPI_Comm comm;
+
+	// number of available omp threads
+    ssize_t omp_available;
+
+	// depth of the local computation
+    ssize_t omp_depth;
+} tree_builder_t;
+
+static void tree_build_single_aux(tree_builder_t b) {
+    assert(b.r - b.l > 1, "1-sized trees are out of scope");
+
+    tree_t *t = tree_index_to_ptr(b.tree_nodes, b.idx);
+    // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", b.idx,
+    //(void*)t, b.l, b.r, tree_left_node_idx(b.idx), tree_right_node_idx(b.idx, b.n_points));
 
     // double const begin = omp_get_wtime();
-    divide_point_set(points, inner_products, inner_products_aux, l, r,
+    divide_point_set(b.points, b.inner_products, b.inner_products_aux, b.l, b.r,
                      t->t_center);
 
-    if (proc_id % n_procs == 0) {
-        t->t_radius = compute_radius(points, l, r, t->t_center);
+    if (b.proc_id % b.n_procs == 0) {
+        t->t_radius = compute_radius(b.points, b.l, b.r, t->t_center);
     }
 
-    // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
+    // fprintf(stderr, "%zd %.12lf\n", b.omp_depth, omp_get_wtime() - begin);
 
-    ssize_t m = (l + r) / 2;
-    if (r - l == 2) {
-        if (proc_id % n_procs == 0) {
+    ssize_t m = (b.l + b.r) / 2;
+    if (b.r - b.l == 2) {
+        if (b.proc_id % b.n_procs == 0) {
             t->t_type = TREE_TYPE_BOTH_LEAF;
-            t->t_left = tree_leaf_idx(l, n_points);
-            t->t_right = tree_leaf_idx(r - 1, n_points);
+            t->t_left = tree_leaf_idx_to_id(b.l, b.n_points, b.index_offset);
+            t->t_right = tree_leaf_idx_to_id(b.r - 1, b.n_points, b.index_offset);
         }
         return;
     }
 
-    if (r - l == 3) {
-        if (proc_id % n_procs == 0) {  // Just 1 of each set
+    if (b.r - b.l == 3) {
+        if (b.proc_id % b.n_procs == 0) {  // Just 1 of each set
             t->t_type = TREE_TYPE_LEFT_LEAF;
-            t->t_left = tree_leaf_idx(l, n_points);
-            t->t_right = tree_right_node_idx(idx, 3);
+            t->t_left = tree_leaf_idx_to_id(b.l, b.n_points, b.index_offset);
+            t->t_right = tree_right_node_idx(b.idx, 3);
 
-            tree_build_single_aux(tree_nodes, points, n_points, inner_products,
-                                  inner_products_aux, t->t_right, m, r, proc_id,
-                                  n_procs, 0, depth + 1);
+            b.idx = t->t_right;
+            b.l = m;
+            b.omp_depth += 1;
+            b.omp_available = 0;
+            tree_build_single_aux(b);
         }
         return;
     }
 
     t->t_type = TREE_TYPE_INNER;
-    t->t_left = tree_left_node_idx(idx);
-    t->t_right = tree_right_node_idx(idx, r - l);
+    t->t_left = tree_left_node_idx(b.idx);
+    t->t_right = tree_right_node_idx(b.idx, b.r - b.l);
 
-    if (n_procs == 1) {
-        if (ava > 0) {  // Parallel
+    if (b.n_procs == 1) {
+        if (b.omp_available > 0) {  // Parallel
+            b.omp_available -= (1 << (size_t)b.omp_depth);
+            b.omp_depth += 1;
+            tree_builder_t right_b = b;
 #pragma omp parallel sections num_threads(2)
             {
 #pragma omp section
                 {
-                    tree_build_single_aux(
-                        tree_nodes, points, n_points, inner_products,
-                        inner_products_aux, t->t_left, l, m, proc_id, n_procs,
-                        ava - (1 << (size_t)depth), depth + 1);
+                    b.r = m;
+                    b.idx = t->t_left;
+                    tree_build_single_aux(b);
                 }
 
 #pragma omp section
                 {
-                    tree_build_single_aux(tree_nodes, points, n_points,
-                                          inner_products, inner_products_aux,
-                                          t->t_right, m, r, proc_id, n_procs,
-                                          ava - (1 << depth), depth + 1);
+                    right_b.l = m;
+                    right_b.idx = t->t_right;
+                    tree_build_single_aux(right_b);
                 }
             }
         } else {  // Serial
-            tree_build_single_aux(tree_nodes, points, n_points, inner_products,
-                                  inner_products_aux, t->t_left, l, m, proc_id,
-                                  n_procs, 0, depth + 1);
-            tree_build_single_aux(tree_nodes, points, n_points, inner_products,
-                                  inner_products_aux, t->t_right, m, r, proc_id,
-                                  n_procs, 0, depth + 1);
+            tree_builder_t right_b = b;
+
+            b.r       = m;
+            right_b.l = m;
+
+            b.idx       = t->t_left;
+            right_b.idx = t->t_right;
+            tree_build_single_aux(b);
+            tree_build_single_aux(right_b);
         }
 
-    } else if (proc_id % n_procs < n_procs / 2) {
-        tree_build_single_aux(tree_nodes, points, n_points, inner_products,
-                              inner_products_aux, t->t_left, l, m, proc_id,
-                              n_procs / 2, ava, 0);
-    } else if (proc_id % n_procs >= n_procs / 2) {
-        tree_build_single_aux(tree_nodes, points, n_points, inner_products,
-                              inner_products_aux, t->t_right, m, r, proc_id,
-                              (n_procs + 1) / 2, ava, 0);
+    } else if (b.proc_id % b.n_procs < b.n_procs / 2) {
+        b.r = m;
+        b.n_procs /= 2;
+        b.idx = t->t_left;
+        b.omp_depth = 0;
+        tree_build_single_aux(b);
+    } else if (b.proc_id % b.n_procs >= b.n_procs / 2) {
+        b.l = m;
+        b.n_procs = (b.n_procs + 1) / 2;
+        b.idx = t->t_right;
+        b.omp_depth = 0;
+        tree_build_single_aux(b);
     }
 }
 
@@ -755,107 +799,107 @@ static void tree_build_single(tree_t *tree_nodes, double const **points,
                               double *inner_products, ssize_t n_points,
                               int proc_id, int n_procs) {
     omp_set_nested(1);
-    tree_build_single_aux(
-        tree_nodes, points, n_points, inner_products, inner_products + n_points,
-        0 /* idx */, 0 /* l */, n_points /* r */, proc_id, n_procs,
-        omp_get_max_threads() - 1 /* available threads */, 0 /* depth */);
+    tree_builder_t builder = {
+        .tree_nodes = tree_nodes,
+        .points = points,
+        .n_points = n_points,
+        .n_local_points = n_points,
+        .inner_products = inner_products,
+        .inner_products_aux = inner_products + n_points,
+        .idx = 0,
+        .l = 0,
+        .r = n_points,
+        .index_offset = proc_id * n_points,
+        .proc_id = proc_id,
+        .n_procs = n_procs,
+        .comm = MPI_COMM_WORLD,
+        .omp_available = omp_get_max_threads() - 1,
+        .omp_depth = 0
+    };
+    tree_build_single_aux(builder);
 }
 
-static void tree_build_dist_aux(
-    tree_t *tree_nodes,     /* set of tree nodes */
-    double const **points,  /* list of points */
-    ssize_t n_points,       /* number of points */
-    double *inner_products, /* list of inner products: preallocated to make sure
-                               this function is no-alloc */
-    double *inner_products_aux, /* list of auxiliar inner products: preallocated
-                                   to make sure this function is no-alloc */
-    ssize_t idx,                /* index of this node */
-    ssize_t l,                  /* index of the left-most point for this node */
-    ssize_t r,   /* index of the right-most point for this node */
-    int proc_id, /* mpi proccess id in the communication group*/
-    int n_procs, /* number of mpi processes active in this communication group*/
-    MPI_Comm comm, /* communication group */
-    ssize_t ava,   /* number of available omp threads */
-    ssize_t depth  /* depth of the local computation */
-) {
-    assert(r - l > 1, "1-sized trees are out of scope");
+static void tree_build_dist_aux(tree_builder_t b) {
+    assert(b.r - b.l > 1, "1-sized trees are out of scope");
 
-    LOG("id:%d size:%d", proc_id, n_procs);
+    LOG("id:%4d size:%4d", b.proc_id, b.n_procs);
 
-    tree_t *t = tree_index_to_ptr(tree_nodes, idx);
-    // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
-    //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
+    tree_t *t = tree_index_to_ptr(b.tree_nodes, b.idx);
+    // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", b.idx,
+    //(void*)t, l, r, tree_left_node_idx(b.idx), tree_right_node_idx(b.idx, b.n_points));
 
     // double const begin = omp_get_wtime();
 
-    dist_divide_point_set(points, inner_products, inner_products_aux, l, r,
-                          proc_id, n_procs, comm, t->t_center);
+    dist_divide_point_set(b.points, b.inner_products, b.inner_products_aux, b.l, b.r,
+                          b.proc_id, b.n_procs, b.comm, t->t_center);
 
-    double radius =
-        dist_compute_radius(points, l, r, proc_id, n_procs, comm, t->t_center);
-    if (proc_id == 0) {
+    double radius = dist_compute_radius(b.points, b.l, b.r, b.proc_id, b.n_procs, b.comm, t->t_center);
+    if (b.proc_id == 0) {
         t->t_radius = radius;
     }
 
     // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
 
-    ssize_t m = (l + r) / 2;
-    if (r - l == 2) {
-        if (proc_id == 0) {
+    ssize_t m = (b.l + b.r) / 2;
+    if (b.r - b.l == 2) {
+        if (b.proc_id == 0) {
             t->t_type = TREE_TYPE_BOTH_LEAF;
-            t->t_left = tree_leaf_idx(l, n_points);
-            t->t_right = tree_leaf_idx(r - 1, n_points);
+            t->t_left = tree_leaf_idx_to_id(b.l, b.n_points, b.index_offset);
+            t->t_right = tree_leaf_idx_to_id(b.r - 1, b.n_points, b.index_offset);
         }
         return;
     }
 
-    if (r - l == 3) {
-        if (proc_id == 0) {  // Just 1 of each set
+    if (b.r - b.l == 3) {
+        if (b.proc_id == 0) {  // Just 1 of each set
             t->t_type = TREE_TYPE_LEFT_LEAF;
-            t->t_left = tree_leaf_idx(l, n_points);
-            t->t_right = tree_right_node_idx(idx, 3);
+            t->t_left = tree_leaf_idx_to_id(b.l, b.n_points, b.index_offset);
+            t->t_right = tree_right_node_idx(b.idx, 3);
 
-            tree_build_single_aux(tree_nodes, points, n_points, inner_products,
-                                  inner_products_aux, t->t_right, m, r, proc_id,
-                                  1, 0, 0);
+            b.l = m;
+            b.idx = t->t_right;
+            b.n_procs = 1;
+            b.omp_available = 0;
+            tree_build_single_aux(b);
         }
         return;
     }
 
     t->t_type = TREE_TYPE_INNER;
-    t->t_left = tree_left_node_idx(idx);
-    t->t_right = tree_right_node_idx(idx, r - l);
+    t->t_left = tree_left_node_idx(b.idx);
+    t->t_right = tree_right_node_idx(b.idx, b.r - b.l);
 
-    int group = (proc_id < n_procs / 2) ? 0 : 1;
+    int group = (b.proc_id < b.n_procs / 2) ? 0 : 1;
     MPI_Comm new_comm;
-    MPI_Comm_split(comm, group, proc_id - group * (n_procs / 2), &new_comm);
+    MPI_Comm_split(b.comm, group, b.proc_id - group * (b.n_procs / 2), &new_comm);
 
-    MPI_Comm_rank(new_comm, &proc_id);
-    MPI_Comm_size(new_comm, &n_procs);
+    b.comm = new_comm;
+    MPI_Comm_rank(b.comm, &b.proc_id);
+    MPI_Comm_size(b.comm, &b.n_procs);
 
-    LOG("New Set id:%d size:%d", proc_id, n_procs);
+    LOG("new set id:%d size:%d", b.proc_id, b.n_procs);
 
-    if (n_procs == 1) {
+    if (b.n_procs == 1) {
         if (group == 0) {
-            tree_build_single_aux(tree_nodes, points, n_points, inner_products,
-                                  inner_products_aux, t->t_left, l, m, proc_id,
-                                  n_procs, ava, 0);
+            b.idx = t->t_left;
+            b.r = m;
+            tree_build_single_aux(b);
 
         } else {
-            tree_build_single_aux(tree_nodes, points, n_points, inner_products,
-                                  inner_products_aux, t->t_right, m, r, proc_id,
-                                  n_procs, ava, 0);
+            b.idx = t->t_right;
+            b.l = m;
+            tree_build_single_aux(b);
         }
     } else {
         if (group == 0) {
-            tree_build_dist_aux(tree_nodes, points, n_points, inner_products,
-                                inner_products_aux, t->t_left, l, m, proc_id,
-                                n_procs, new_comm, ava, 0);
+            b.idx = t->t_left;
+            b.r = m;
+            tree_build_dist_aux(b);
 
         } else {
-            tree_build_dist_aux(tree_nodes, points, n_points, inner_products,
-                                inner_products_aux, t->t_right, m, r, proc_id,
-                                n_procs, new_comm, ava, 0);
+            b.idx = t->t_right;
+            b.l = m;
+            tree_build_dist_aux(b);
         }
     }
 }
@@ -866,36 +910,53 @@ static void tree_build_dist(tree_t *tree_nodes, double const **points,
                             double *inner_products, ssize_t n_points,
                             ssize_t n_local_points, int proc_id, int n_procs) {
     omp_set_nested(1);
-    tree_build_dist_aux(
-        tree_nodes, points, n_points, inner_products,
-        inner_products + n_local_points, 0 /* idx */, 0 /* l */,
-        n_local_points /* r */, proc_id, n_procs, MPI_COMM_WORLD,
-        omp_get_max_threads() - 1 /* available threads */, 0 /* depth */);
+    tree_builder_t builder = {
+        .tree_nodes = tree_nodes,
+        .points = points,
+        .n_points = n_points,
+        .n_local_points = n_points,
+        .inner_products = inner_products,
+        .inner_products_aux = inner_products + n_local_points,
+        .idx = 0,
+        .l = 0,
+        .r = n_local_points,
+        .index_offset = n_local_points * proc_id,
+        .proc_id = proc_id,
+        .n_procs = n_procs,
+        .comm = MPI_COMM_WORLD,
+        .omp_available = omp_get_max_threads() - 1,
+        .omp_depth = 0
+    };
+    tree_build_dist_aux(builder);
 }
 
 #ifndef PROFILE
-static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
-                       double const **points, int proc_id) {
-    ssize_t n_points = tree_size + 1;
-    for (ssize_t i = 0; i < tree_size; ++i) {
+static void tree_print(tree_t const *tree_nodes,
+                       double const **points, ssize_t n_local_points, ssize_t n_points,int proc_id) {
+    ssize_t offset = n_local_points * proc_id;
+    for (ssize_t i = 0; i < n_local_points; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
-
-        // LOG("printing %zd {\n"
-        //     "   type:   %d,\n"
-        //     "   radius: %lf,\n"
-        //     "   left:   %zd,\n"
-        //     "   right:  %zd,\n"
-        //     "}", i, t->t_type, t->t_radius, t->t_left, t->t_right);
 
         if (t->t_radius == 0) {
             continue;
         }
 
+        /*
+        LOG("[%d] printing %zd {\n"
+            "   type:   %d,\n"
+            "   radius: %lf,\n"
+            "   left:   %zd | %zu,\n"
+            "   right:  %zd | %zu,\n"
+            "}", proc_id, i, t->t_type, t->t_radius,
+            t->t_left, tree_leaf_id_to_idx(t->t_left, n_points, offset),
+            t->t_right, tree_leaf_id_to_idx(t->t_right, n_points, offset));
+            */
+
         if (tree_has_left_leaf(t) != 0) {
             fprintf(stdout, "%zd -1 -1 %.6lf", t->t_left, 0.0);
             for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
                 fprintf(stdout, " %lf",
-                        points[tree_leaf_idx_to_index(t->t_left, n_points)][j]);
+                        points[tree_leaf_id_to_idx(t->t_left, n_points, offset)][j]);
             }
             fputc('\n', stdout);
             fflush(stdout);
@@ -904,9 +965,8 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
         if (tree_has_right_leaf(t) != 0) {
             fprintf(stdout, "%zd -1 -1 %.6lf", t->t_right, 0.0);
             for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(
-                    stdout, " %lf",
-                    points[tree_leaf_idx_to_index(t->t_right, n_points)][j]);
+                fprintf(stdout, " %lf",
+                        points[tree_leaf_id_to_idx(t->t_right, n_points, offset)][j]);
             }
             fputc('\n', stdout);
             fflush(stdout);
@@ -936,7 +996,7 @@ static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
     *c_mode = CM_SINGLE_NODE;
     size_t sz_to_alloc = (size_t)n_points;
 
-    if (true) {
+    if (false) {
         *c_mode = CM_DISTRIBUTED;
         sz_to_alloc = (size_t)n_points / *n_procs;
     }
@@ -971,7 +1031,9 @@ static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
         pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
     }
 
-    *tree_nodes = calloc((size_t)(sz_to_alloc), tree_sizeof());
+    *tree_nodes = calloc(
+        (size_t)(sz_to_alloc),
+        tree_sizeof());
     if (*tree_nodes == NULL) {
         if (errno != ENOMEM) {
             KILL("Failed to allocate (and not due to lack of memory");
@@ -1144,8 +1206,6 @@ int main(int argc, char **argv) {
                  &tree_nodes, &inner_products, &c_mode);
     double const *point_values = points[0];
 
-    ssize_t tree_size = n_points - 1;
-
     MPI_Barrier(MPI_COMM_WORLD);
     switch (c_mode) {
         case CM_SINGLE_NODE:
@@ -1154,7 +1214,6 @@ int main(int argc, char **argv) {
 
             break;
         case CM_DISTRIBUTED:
-            tree_size = n_points / n_procs;
             tree_build_dist(tree_nodes, points, inner_products, n_points,
                             n_local_points, proc_id, n_procs);
             break;
@@ -1172,7 +1231,7 @@ int main(int argc, char **argv) {
 #ifndef PROFILE
         fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
         fflush(stdout);
-        tree_print(tree_nodes, tree_size, points, proc_id);
+        tree_print(tree_nodes, points, n_local_points, n_points, proc_id);
         fflush(stdout);
 #endif
     }
@@ -1181,7 +1240,7 @@ int main(int argc, char **argv) {
     for (int pid = 1; pid < n_procs; ++pid) {
         MPI_Barrier(MPI_COMM_WORLD);
         if (proc_id == pid) {
-            tree_print(tree_nodes, tree_size, points, proc_id);
+            tree_print(tree_nodes, points, n_local_points, n_points, proc_id);
         }
     }
 #endif
