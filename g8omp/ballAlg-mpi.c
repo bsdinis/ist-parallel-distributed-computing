@@ -1,7 +1,6 @@
 #include <errno.h>
 #include <math.h>
 #include <mpi.h>
-#include <time.h>
 #include <omp.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -9,10 +8,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifndef ssize_t
 #define ssize_t __ssize_t
 #endif
+
+// TODO: delete
+char line_buf[4096];
 
 typedef enum computation_mode_t {
     // everything fits in memory, we have all nodes with the whole dataset
@@ -186,6 +189,89 @@ static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
             *b = i;
         }
     }
+
+    return dist_a_b;
+}
+
+// Find the two most distant points approximately
+// a is the furthest point from points[l]
+// b is the furthes point from a
+//
+// time = 2*n
+//
+static double dist_most_distant_approx(double const **points, ssize_t l,
+                                       ssize_t r, int proc_id, int n_procs,
+                                       MPI_Comm comm, double *a, double *b) {
+    double first_point[N_DIMENSIONS];
+    size_t off = 0;
+    if (proc_id == 0) {
+        memcpy(first_point, points[l], sizeof(first_point));
+    } else {
+        memset(first_point, 0, sizeof(first_point));
+    }
+
+    MPI_Bcast(&first_point[0], N_DIMENSIONS, MPI_DOUBLE, 0, comm);
+
+    double dist_l_a = 0;
+    ssize_t a_idx = 0;
+    for (ssize_t i = l; i < r; ++i) {
+        double dist = distance_squared(first_point, points[i]);
+        if (dist > dist_l_a) {
+            dist_l_a = dist;
+            a_idx = i;
+        }
+    }
+    LOG("[%d] a0 => found %lf", proc_id, dist_l_a);
+
+    double recv_points[n_procs][N_DIMENSIONS];
+    double send_points[n_procs][N_DIMENSIONS];
+    for (int idx = 0; idx < n_procs; ++idx) {
+        memcpy(send_points[idx], points[a_idx], N_DIMENSIONS * sizeof(double));
+    }
+    MPI_Alltoall(send_points, N_DIMENSIONS, MPI_DOUBLE, recv_points,
+                 N_DIMENSIONS, MPI_DOUBLE, comm);
+
+    dist_l_a = 0;
+    a_idx = 0;
+    for (ssize_t i = 0; i < n_procs; ++i) {
+        double dist = distance_squared(first_point, recv_points[i]);
+        if (dist > dist_l_a) {
+            dist_l_a = dist;
+            a_idx = i;
+        }
+    }
+    memcpy(a, recv_points[a_idx], N_DIMENSIONS * sizeof(double));
+    LOG("[%d] af => found %lf", proc_id, dist_l_a);
+
+    double dist_a_b = 0;
+    ssize_t b_idx = 0;
+    for (ssize_t i = l; i < r; ++i) {
+        double dist = distance_squared(a, points[i]);
+        if (dist > dist_a_b) {
+            dist_a_b = dist;
+            b_idx = i;
+        }
+    }
+    memset(recv_points, 0, sizeof(recv_points));
+    LOG("[%d] b0 => found %lf", proc_id, dist_a_b);
+
+    for (int idx = 0; idx < n_procs; ++idx) {
+        memcpy(send_points[idx], points[b_idx], N_DIMENSIONS * sizeof(double));
+    }
+    MPI_Alltoall(send_points, N_DIMENSIONS, MPI_DOUBLE, recv_points,
+                 N_DIMENSIONS, MPI_DOUBLE, comm);
+
+    dist_a_b = 0;
+    b_idx = 0;
+    for (ssize_t i = 0; i < n_procs; ++i) {
+        double dist = distance_squared(a, recv_points[i]);
+        if (dist > dist_a_b) {
+            dist_a_b = dist;
+            b_idx = i;
+        }
+    }
+    memcpy(b, recv_points[b_idx], N_DIMENSIONS * sizeof(double));
+    LOG("[%d] bf => found %lf", proc_id, dist_a_b);
 
     return dist_a_b;
 }
@@ -383,6 +469,48 @@ static void divide_point_set(double const **points, double *inner_products,
     }
 }
 
+// Divide a point set, finding its center (for the ball algorithm)
+// will reorder the points in the set.
+//
+static void dist_divide_point_set(double const **points, double *inner_products,
+                                  double *inner_products_aux, ssize_t l,
+                                  ssize_t r, int proc_id, int n_procs,
+                                  MPI_Comm comm, double *center) {
+    // 2 * n
+    double a[N_DIMENSIONS];
+    double b[N_DIMENSIONS];
+    double dist =
+        dist_most_distant_approx(points, l, r, proc_id, n_procs, comm, a, b);
+
+    // points[a] may change after the partition
+    double b_minus_a[N_DIMENSIONS];
+    for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
+        b_minus_a[i] = b[i] - a[i];
+    }
+
+    for (ssize_t i = l; i < r; ++i) {
+        inner_products[i] = diff_inner_product(points[i], a, b_minus_a);
+        inner_products_aux[i] = inner_products[i];
+    }
+
+    // TODO
+    // O(n)
+    // No point in parallelizing: requires too much synchronization overhead
+    double median = find_median(inner_products, l, r);
+
+    // O(n)
+    // Not possible in parallelizing
+    partition_on_median(points, inner_products_aux, l, r, median);  // TODO
+
+    // TODO
+    double normalized_median = median / dist;
+    for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
+        center[i] =
+            a[i] + (b_minus_a[i] *       // NOLINT: this does not see that
+                    normalized_median);  // we fully initialize b_minus_a
+    }
+}
+
 // Compute radius of a ball, given its center
 // As this requires synchronization to compute in parallel, we have observed
 // slowdowns from trying to parallelize this.
@@ -400,6 +528,48 @@ static double compute_radius(double const **points, ssize_t l, ssize_t r,
     }
 
     return sqrt(max_dist_sq);
+}
+
+// Compute radius of a ball, given its center
+// As this requires synchronization to compute in parallel, we have observed
+// slowdowns from trying to parallelize this.
+//
+// Returns radius
+//
+static double dist_compute_radius(double const **points, ssize_t l, ssize_t r,
+                                  int proc_id, int n_procs, MPI_Comm comm,
+                                  double const *center) {
+    double max_dist_sq = 0.0;
+    for (ssize_t i = l; i < r; i++) {
+        double dist = distance_squared(center, points[i]);
+        if (dist > max_dist_sq) {
+            max_dist_sq = dist;
+        }
+    }
+
+    LOG("[%2d] r0 => %6.2lf", proc_id, max_dist_sq);
+
+    double max_sq_mine[n_procs];
+    for (ssize_t i = 0; i < n_procs; ++i) {
+        max_sq_mine[i] = max_dist_sq;
+    }
+
+    double max_sq_all[n_procs];
+    MPI_Gather(max_sq_mine, 1, MPI_DOUBLE, max_sq_all, 1, MPI_DOUBLE, 0, comm);
+
+    if (proc_id == 0) {
+        max_dist_sq = 0.0;
+        for (ssize_t i = 0; i < n_procs; ++i) {
+            if (max_dist_sq < max_sq_all[i]) {
+                max_dist_sq = max_sq_all[i];
+            }
+        }
+        LOG("[%2d] rf => %6.2lf", proc_id, max_dist_sq);
+
+        return sqrt(max_dist_sq);
+    } else {
+        return 0.0;
+    }
 }
 
 /*
@@ -474,7 +644,43 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
                : (ssize_t)((size_t)(ptr - base_ptr) / (tree_sizeof()));
 }
 
-static void tree_build_aux(
+static void tree_build_dist_aux(
+    tree_t *tree_nodes,     /* set of tree nodes */
+    double const **points,  /* list of points */
+    double *inner_products, /* list of inner products: preallocated to make sure
+                               this function is no-alloc */
+    double *inner_products_aux, /* list of auxiliar inner products: preallocated
+                                   to make sure this function is no-alloc */
+    ssize_t idx,                /* index of this node */
+    ssize_t l,                  /* index of the left-most point for this node */
+    ssize_t r,   /* index of the right-most point for this node */
+    int proc_id, /* mpi proccess id in the communication group*/
+    int n_procs, /* number of mpi processes active in this communication group*/
+    MPI_Comm comm, /* communication group */
+    ssize_t ava,   /* number of available omp threads */
+    ssize_t depth  /* depth of the local computation */
+) {
+    assert(r - l > 1, "1-sized trees are out of scope");
+
+    tree_t *t = tree_index_to_ptr(tree_nodes, idx);
+    // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
+    //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
+
+    // double const begin = omp_get_wtime();
+
+    dist_divide_point_set(points, inner_products, inner_products_aux, l, r,
+                          proc_id, n_procs, comm, t->t_center);
+
+    double radius =
+        dist_compute_radius(points, l, r, proc_id, n_procs, comm, t->t_center);
+    if (proc_id == 0) {
+        t->t_radius = radius;
+    }
+
+    // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
+}
+
+static void tree_build_single_aux(
     tree_t *tree_nodes,     /* set of tree nodes */
     double const **points,  /* list of points */
     double *inner_products, /* list of inner products: preallocated to make sure
@@ -521,9 +727,9 @@ static void tree_build_aux(
             t->t_left = l;
             t->t_right = tree_right_node_idx(idx);
 
-            tree_build_aux(tree_nodes, points, inner_products,
-                           inner_products_aux, t->t_right, m, r, proc_id,
-                           n_procs, ava, depth + 1);
+            tree_build_single_aux(tree_nodes, points, inner_products,
+                                  inner_products_aux, t->t_right, m, r, proc_id,
+                                  n_procs, ava, depth + 1);
         }
         return;
     }
@@ -538,35 +744,37 @@ static void tree_build_aux(
             {
 #pragma omp section
                 {
-                    tree_build_aux(tree_nodes, points, inner_products,
-                                   inner_products_aux, t->t_left, l, m, proc_id,
-                                   n_procs, ava - (1 << (size_t)depth),
-                                   depth + 1);
+                    tree_build_single_aux(
+                        tree_nodes, points, inner_products, inner_products_aux,
+                        t->t_left, l, m, proc_id, n_procs,
+                        ava - (1 << (size_t)depth), depth + 1);
                 }
 
 #pragma omp section
                 {
-                    tree_build_aux(tree_nodes, points, inner_products,
-                                   inner_products_aux, t->t_right, m, r,
-                                   proc_id, n_procs, ava - (1 << depth),
-                                   depth + 1);
+                    tree_build_single_aux(tree_nodes, points, inner_products,
+                                          inner_products_aux, t->t_right, m, r,
+                                          proc_id, n_procs, ava - (1 << depth),
+                                          depth + 1);
                 }
             }
         } else {  // Serial
-            tree_build_aux(tree_nodes, points, inner_products,
-                           inner_products_aux, t->t_left, l, m, proc_id,
-                           n_procs, 0, depth + 1);
-            tree_build_aux(tree_nodes, points, inner_products,
-                           inner_products_aux, t->t_right, m, r, proc_id,
-                           n_procs, 0, depth + 1);
+            tree_build_single_aux(tree_nodes, points, inner_products,
+                                  inner_products_aux, t->t_left, l, m, proc_id,
+                                  n_procs, 0, depth + 1);
+            tree_build_single_aux(tree_nodes, points, inner_products,
+                                  inner_products_aux, t->t_right, m, r, proc_id,
+                                  n_procs, 0, depth + 1);
         }
 
     } else if (proc_id % n_procs < n_procs / 2) {
-        tree_build_aux(tree_nodes, points, inner_products, inner_products_aux,
-                       t->t_left, l, m, proc_id, n_procs / 2, ava, 0);
+        tree_build_single_aux(tree_nodes, points, inner_products,
+                              inner_products_aux, t->t_left, l, m, proc_id,
+                              n_procs / 2, ava, 0);
     } else if (proc_id % n_procs >= n_procs / 2) {
-        tree_build_aux(tree_nodes, points, inner_products, inner_products_aux,
-                       t->t_right, m, r, proc_id, (n_procs + 1)/ 2, ava, 0);
+        tree_build_single_aux(tree_nodes, points, inner_products,
+                              inner_products_aux, t->t_right, m, r, proc_id,
+                              (n_procs + 1) / 2, ava, 0);
     }
 }
 
@@ -574,9 +782,9 @@ static void tree_build_aux(
 //
 static void tree_build_single(tree_t *tree_nodes, double const **points,
                               double *inner_products, ssize_t n_points,
-                            int proc_id, int n_procs) {
+                              int proc_id, int n_procs) {
     omp_set_nested(1);
-    tree_build_aux(
+    tree_build_single_aux(
         tree_nodes, points, inner_products, inner_products + n_points,
         0 /* idx */, 0 /* l */, n_points /* r */, proc_id, n_procs,
         omp_get_max_threads() - 1 /* available threads */, 0 /* depth */);
@@ -586,15 +794,13 @@ static void tree_build_single(tree_t *tree_nodes, double const **points,
 //
 static void tree_build_dist(tree_t *tree_nodes, double const **points,
                             double *inner_products, ssize_t n_points,
-                            int proc_id, int n_procs) {
-    return;
-#if 0
+                            ssize_t n_local_points, int proc_id, int n_procs) {
     omp_set_nested(1);
-    tree_build_aux(
-        tree_nodes, points, inner_products, inner_products + n_points,
-        0 /* idx */, 0 /* l */, n_points /* r */, proc_id, n_procs,
-        omp_get_max_threads() - 1 /* available threads */, 0 /* depth */);
-#endif
+    tree_build_dist_aux(
+        tree_nodes, points, inner_products, inner_products + n_local_points,
+        0 /* idx */, 0 /* l */, n_local_points /* r */, proc_id, n_procs,
+        MPI_COMM_WORLD, omp_get_max_threads() - 1 /* available threads */,
+        0 /* depth */);
 }
 
 #ifndef PROFILE
@@ -647,9 +853,10 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 #define RANGE 10
 #endif  // RANGE
 
-static double const **allocate(int * proc_id, int * n_procs, ssize_t n_points, uint32_t seed,
-                            tree_t **tree_nodes, double **inner_products,
-                            computation_mode_t *c_mode) {
+static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
+                               ssize_t *n_local_points, uint32_t seed,
+                               tree_t **tree_nodes, double **inner_products,
+                               computation_mode_t *c_mode) {
     // Lemma: the number of inner nodes, m, will be Theta(n), worst case.
     // Proof.
     // 1. m < n: there are more leaves than inner nodes. This is true by
@@ -671,11 +878,10 @@ static double const **allocate(int * proc_id, int * n_procs, ssize_t n_points, u
     *c_mode = CM_SINGLE_NODE;
     size_t sz_to_alloc = (size_t)n_points;
 
-    if (false) {
+    if (true) {
         *c_mode = CM_DISTRIBUTED;
-        size_t sz_to_alloc = (size_t)n_points / *n_procs;
+        sz_to_alloc = (size_t)n_points / *n_procs;
     }
-
 
     srand(seed);
 
@@ -751,10 +957,11 @@ static double const **allocate(int * proc_id, int * n_procs, ssize_t n_points, u
     }
 
     /***
-     * - All distributed
+     * - Some distributed, others not: abort (we could cycle until we stabilized
+     *on a set of distributed nodes, which may not exist)
+     * - All distributed: do all distributedly
      * - 1+ single: drop all non-singles, compute as single
      ***/
-
 
     bool mine[*n_procs];
     memset(mine, *c_mode == CM_SINGLE_NODE, sizeof(mine));
@@ -787,6 +994,7 @@ static double const **allocate(int * proc_id, int * n_procs, ssize_t n_points, u
         *n_procs -= n_off;
     }
 
+    *n_local_points = (size_t)sz_to_alloc;
     if (*c_mode == CM_SINGLE_NODE) {
         // As discussed, the number of inner nodes is
         // at most the number of leaves of the tree.
@@ -802,13 +1010,16 @@ static double const **allocate(int * proc_id, int * n_procs, ssize_t n_points, u
     } else if (*c_mode == CM_DISTRIBUTED) {
         for (ssize_t i = 0, idx = 0; i < n_points; ++i) {
             if (i / sz_to_alloc == *proc_id) {
-                for (ssize_t j = 0; j < N_DIMENSIONS; j++, idx++) {
-                    pt_arr[idx * (N_DIMENSIONS) + j] =
-                        RANGE * ((double)rand()) / RAND_MAX;
+                for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
+                    double r = rand();
+                    pt_arr[idx * (N_DIMENSIONS) + j] = (RANGE * r) / RAND_MAX;
                 }
                 pt_ptr[idx] = &pt_arr[idx * (N_DIMENSIONS)];
+                idx += 1;
             } else {
-                rand();
+                for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
+                    double r = rand();
+                }
             }
         }
     }
@@ -819,7 +1030,8 @@ static double const **allocate(int * proc_id, int * n_procs, ssize_t n_points, u
 #undef RANGE
 
 // parse the arguments
-static void parse_args(int argc, char *argv[], ssize_t *n_points, uint32_t * seed) {
+static void parse_args(int argc, char *argv[], ssize_t *n_points,
+                       uint32_t *seed) {
     if (argc != 4) {
         KILL("usage: %s <n_dimensions> <n_points> <seed>", argv[0]);
     }
@@ -862,26 +1074,28 @@ int main(int argc, char **argv) {
 
     uint32_t seed = 0;
     ssize_t n_points = 0;
+    ssize_t n_local_points = 0;
     parse_args(argc, argv, &n_points, &seed);
 
     tree_t *tree_nodes = NULL;
     double *inner_products = NULL;
     computation_mode_t c_mode = CM_SINGLE_NODE;
     int old_id = proc_id;
-    double const **points = allocate(&proc_id, &n_procs, n_points, seed, &tree_nodes, &inner_products, &c_mode);
+    double const **points =
+        allocate(&proc_id, &n_procs, n_points, &n_local_points, seed,
+                 &tree_nodes, &inner_products, &c_mode);
     double const *point_values = points[0];
 
     MPI_Barrier(MPI_COMM_WORLD);
     switch (c_mode) {
         case CM_SINGLE_NODE:
             tree_build_single(tree_nodes, points, inner_products, n_points,
-                            proc_id, n_procs);
+                              proc_id, n_procs);
 
             break;
         case CM_DISTRIBUTED:
-            KILL("distributed mode (%d->%d)/%d", old_id, proc_id, n_procs);
             tree_build_dist(tree_nodes, points, inner_products, n_points,
-                            proc_id, n_procs);
+                            n_local_points, proc_id, n_procs);
             break;
         case CM_PASSIVE:
             LOG("passive mode %d->%d", old_id, proc_id);
