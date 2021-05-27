@@ -702,7 +702,7 @@ static void tree_build_single_aux(
 
             tree_build_single_aux(tree_nodes, points, inner_products,
                                   inner_products_aux, t->t_right, m, r, proc_id,
-                                  n_procs, ava, depth + 1);
+                                  n_procs, 0, depth + 1);
         }
         return;
     }
@@ -781,6 +781,8 @@ static void tree_build_dist_aux(
 ) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
+    LOG("id:%d size:%d", proc_id, n_procs);
+
     tree_t *t = tree_index_to_ptr(tree_nodes, idx);
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", idx,
     //(void*)t, l, r, tree_left_node_idx(idx), tree_right_node_idx(idx));
@@ -789,6 +791,7 @@ static void tree_build_dist_aux(
 
     dist_divide_point_set(points, inner_products, inner_products_aux, l, r,
                           proc_id, n_procs, comm, t->t_center);
+
 
     double radius =
         dist_compute_radius(points, l, r, proc_id, n_procs, comm, t->t_center);
@@ -802,24 +805,22 @@ static void tree_build_dist_aux(
     if (r - l == 2) {
         if (proc_id == 0) {
             t->t_type = TREE_TYPE_BOTH_LEAF;
-            t->t_left = l;
-            t->t_right = r - 1;
+            t->t_left = tree_leaf_idx(l);
+            t->t_right = tree_leaf_idx(r - 1);
         }
         return;
     }
 
-    // TODO idx not correct
-
     if (r - l == 3) {
         if (proc_id == 0) {  // Just 1 of each set
             t->t_type = TREE_TYPE_LEFT_LEAF;
-            t->t_left = l;
+            t->t_left = tree_leaf_idx(l);
             t->t_right = tree_right_node_idx(idx, 3);
 
             // TODO: figure out ids
             tree_build_single_aux(tree_nodes, points, inner_products,
                                   inner_products_aux, t->t_right, m, r, proc_id,
-                                  1, ava, 0);
+                                  1, 0, 0);
         }
         return;
     }
@@ -828,16 +829,27 @@ static void tree_build_dist_aux(
     t->t_left = tree_left_node_idx(idx);
     t->t_right = tree_right_node_idx(idx, r - l);
 
+    int group = (proc_id < n_procs / 2) ? 0 : 1;
+    MPI_Comm new_comm;
+    MPI_Comm_split(comm, group, proc_id - group * (n_procs / 2), &new_comm);
+
+    MPI_Comm_rank(new_comm, &proc_id);
+    MPI_Comm_size(new_comm, &n_procs);
+
+    LOG("New Set id:%d size:%d", proc_id, n_procs);
+
     if (n_procs == 1) {
-        // Go to new aux function that is only single machine
+        if (group == 0) {
+            tree_build_single_aux(tree_nodes, points, inner_products,
+                                inner_products_aux, t->t_left, l, m, proc_id,
+                                n_procs, ava, 0);
+
+        } else {
+            tree_build_single_aux(tree_nodes, points, inner_products,
+                                inner_products_aux, t->t_right, m, r, proc_id,
+                                n_procs, ava, 0);
+        }
     } else {
-        int group = (proc_id < n_procs / 2) ? 0 : 1;
-        MPI_Comm new_comm;
-        MPI_Comm_split(comm, group, proc_id - group * (n_procs / 2), &new_comm);
-
-        MPI_Comm_rank(new_comm, &proc_id);
-        MPI_Comm_size(new_comm, &n_procs);
-
         if (group == 0) {
             tree_build_dist_aux(tree_nodes, points, inner_products,
                                 inner_products_aux, t->t_left, l, m, proc_id,
@@ -865,21 +877,21 @@ static void tree_build_dist(tree_t *tree_nodes, double const **points,
 }
 
 #ifndef PROFILE
-static void tree_print(tree_t const *tree_nodes,
+static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
                        double const **points, int proc_id) {
-    for (ssize_t i = 0; i < N_POINTS - 1; ++i) {
+    for (ssize_t i = 0; i < tree_size; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
+
+        // LOG("printing %zd {\n"
+        //     "   type:   %d,\n"
+        //     "   radius: %lf,\n"
+        //     "   left:   %zd,\n"
+        //     "   right:  %zd,\n"
+        //     "}", i, t->t_type, t->t_radius, t->t_left, t->t_right);
+
         if (t->t_radius == 0) {
             continue;
         }
-        /*
-        LOG("printing %zd {\n"
-            "   type:   %d,\n"
-            "   radius: %lf,\n"
-            "   left:   %zd,\n"
-            "   right:  %zd,\n"
-            "}", i, t->t_type, t->t_radius, t->t_left, t->t_right);
-            */
 
         if (tree_has_left_leaf(t) != 0) {
             fprintf(stdout, "%zd -1 -1 %.6lf", t->t_left, 0.0);
@@ -923,7 +935,7 @@ static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
     *c_mode = CM_SINGLE_NODE;
     size_t sz_to_alloc = (size_t)n_points;
 
-    if (false) {
+    if (true) {
         *c_mode = CM_DISTRIBUTED;
         sz_to_alloc = (size_t)n_points / *n_procs;
     }
@@ -1132,6 +1144,8 @@ int main(int argc, char **argv) {
                  &tree_nodes, &inner_products, &c_mode);
     double const *point_values = points[0];
 
+    ssize_t tree_size = n_points - 1;
+
     MPI_Barrier(MPI_COMM_WORLD);
     switch (c_mode) {
         case CM_SINGLE_NODE:
@@ -1140,6 +1154,7 @@ int main(int argc, char **argv) {
 
             break;
         case CM_DISTRIBUTED:
+            tree_size = n_points / n_procs;
             tree_build_dist(tree_nodes, points, inner_products, n_points,
                             n_local_points, proc_id, n_procs);
             break;
@@ -1157,7 +1172,7 @@ int main(int argc, char **argv) {
 #ifndef PROFILE
         fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
         fflush(stdout);
-        tree_print(tree_nodes, points, proc_id);
+        tree_print(tree_nodes, tree_size, points, proc_id);
         fflush(stdout);
 #endif
     }
@@ -1166,7 +1181,7 @@ int main(int argc, char **argv) {
     for (int pid = 1; pid < n_procs; ++pid) {
         MPI_Barrier(MPI_COMM_WORLD);
         if (proc_id == pid) {
-            tree_print(tree_nodes, points, proc_id);
+            tree_print(tree_nodes, tree_size, points, proc_id);
         }
     }
 #endif
