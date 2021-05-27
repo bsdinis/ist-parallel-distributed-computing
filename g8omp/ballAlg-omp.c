@@ -529,11 +529,17 @@ static inline bool tree_has_right_leaf(tree_t const *t) {
 
 // functions for assigning nodes
 //
-static inline ssize_t tree_left_node_idx(ssize_t parent) {
-    return 2 * parent + 1;
+static inline ssize_t tree_left_node_idx(ssize_t parent) { return parent + 1; }
+static inline ssize_t tree_right_node_idx(ssize_t parent, ssize_t n_points) {
+    return parent + n_points / 2;
 }
-static inline ssize_t tree_right_node_idx(ssize_t parent) {
-    return 2 * parent + 2;
+
+static inline ssize_t tree_leaf_idx(ssize_t index, ssize_t n_points) {
+    return index + n_points - 1;
+}
+
+static inline ssize_t tree_leaf_idx_to_index(ssize_t idx, ssize_t n_points) {
+    return idx + 1 - n_points;
 }
 
 // Calling sizeof(tree_t) is always wrong, because tree nodes have an FMA
@@ -589,23 +595,26 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
             */
 
         if (tree_has_left_leaf(t) != 0) {
-            fprintf(stdout, "%zd -1 -1 %.6lf", tree_left_node_idx(i), 0.0);
+            fprintf(stdout, "%zd -1 -1 %.6lf", t->t_left, 0.0);
             for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(stdout, " %lf", points[t->t_left][j]);
+                fprintf(stdout, " %lf",
+                        points[tree_leaf_idx_to_index(t->t_left, n_points)][j]);
             }
             fputc('\n', stdout);
         }
 
         if (tree_has_right_leaf(t) != 0) {
-            fprintf(stdout, "%zd -1 -1 %.6lf", tree_right_node_idx(i), 0.0);
+            fprintf(stdout, "%zd -1 -1 %.6lf", t->t_right, 0.0);
             for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(stdout, " %lf", points[t->t_right][j]);
+                fprintf(
+                    stdout, " %lf",
+                    points[tree_leaf_idx_to_index(t->t_right, n_points)][j]);
             }
             fputc('\n', stdout);
         }
 
-        fprintf(stdout, "%zd %zd %zd %.6lf", i, tree_left_node_idx(i),
-                tree_right_node_idx(i), t->t_radius);
+        fprintf(stdout, "%zd %zd %zd %.6lf", i, t->t_left, t->t_right,
+                t->t_radius);
         for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
             fprintf(stdout, " %lf", t->t_center[j]);
         }
@@ -615,7 +624,7 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
 #endif
 
 static void tree_build_aux(tree_t *tree_nodes, double const **points,
-                           ssize_t idx, ssize_t l, ssize_t r,
+                           ssize_t n_points, ssize_t idx, ssize_t l, ssize_t r,
                            strategy_t find_points, ssize_t ava, ssize_t depth) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
@@ -640,24 +649,24 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     ssize_t m = (l + r) / 2;
     if (r - l == 2) {
         t->t_type = TREE_TYPE_BOTH_LEAF;
-        t->t_left = l;
-        t->t_right = r - 1;
+        t->t_left = tree_leaf_idx(l, n_points);
+        t->t_right = tree_leaf_idx(r - 1, n_points);
         return;
     }
 
     if (r - l == 3) {
         t->t_type = TREE_TYPE_LEFT_LEAF;
-        t->t_left = l;
-        t->t_right = tree_right_node_idx(idx);
+        t->t_left = tree_leaf_idx(l, n_points);
+        t->t_right = tree_right_node_idx(idx, 3);
 
-        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, ava,
-                       depth + 1);
+        tree_build_aux(tree_nodes, points, n_points, t->t_right, m, r,
+                       find_points, ava, depth + 1);
         return;
     }
 
     t->t_type = TREE_TYPE_INNER;
     t->t_left = tree_left_node_idx(idx);
-    t->t_right = tree_right_node_idx(idx);
+    t->t_right = tree_right_node_idx(idx, r - l);
 
     if (ava > 0) {  // Parallel
 #pragma omp parallel sections num_threads(2)
@@ -669,8 +678,9 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
                  omp_get_active_level(), omp_get_team_num(),
                  omp_get_thread_num(), ava - (1 << depth));
                  */
-                tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points,
-                               ava - (1 << (size_t)depth), depth + 1);
+                tree_build_aux(tree_nodes, points, n_points, t->t_left, l, m,
+                               find_points, ava - (1 << (size_t)depth),
+                               depth + 1);
             }
 
 #pragma omp section
@@ -680,15 +690,15 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
                  omp_get_active_level(), omp_get_team_num(),
                  omp_get_thread_num(), ava - (1 << (size_t)depth));
                  */
-                tree_build_aux(tree_nodes, points, t->t_right, m, r,
+                tree_build_aux(tree_nodes, points, n_points, t->t_right, m, r,
                                find_points, ava - (1 << depth), depth + 1);
             }
         }
     } else {  // Serial
-        tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points, 0,
-                       depth + 1);
-        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points, 0,
-                       depth + 1);
+        tree_build_aux(tree_nodes, points, n_points, t->t_left, l, m,
+                       find_points, 0, depth + 1);
+        tree_build_aux(tree_nodes, points, n_points, t->t_right, m, r,
+                       find_points, 0, depth + 1);
     }
 }
 
@@ -697,8 +707,8 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
 static void tree_build(tree_t *tree_nodes, double const **points,
                        ssize_t n_points, strategy_t find_points) {
     omp_set_nested(1);
-    tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
-                   find_points /* strategy */,
+    tree_build_aux(tree_nodes, points, n_points, 0 /* idx */, 0 /* l */,
+                   n_points /* r */, find_points /* strategy */,
                    omp_get_max_threads() - 1 /* available threads */,
                    0 /* depth */);
 }

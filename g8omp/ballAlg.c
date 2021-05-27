@@ -13,7 +13,6 @@
 #endif
 
 ssize_t N_DIMENSIONS = 0;
-ssize_t N_POINTS = 0;
 
 #define xmalloc(size) priv_xmalloc__(__FILE__, __LINE__, size)
 #define xrealloc(ptr, size) priv_xrealloc__(__FILE__, __LINE__, ptr, size)
@@ -428,19 +427,17 @@ static inline bool tree_has_right_leaf(tree_t const *t) {
 
 // functions for assigning nodes
 //
-static inline ssize_t tree_left_node_idx(ssize_t parent) {
-    return parent + 1;
-}
+static inline ssize_t tree_left_node_idx(ssize_t parent) { return parent + 1; }
 static inline ssize_t tree_right_node_idx(ssize_t parent, ssize_t n_points) {
     return parent + n_points / 2;
 }
 
-static inline ssize_t tree_leaf_idx(ssize_t index) {
-    return index + N_POINTS - 1;
+static inline ssize_t tree_leaf_idx(ssize_t index, ssize_t n_points) {
+    return index + n_points - 1;
 }
 
-static inline ssize_t tree_leaf_idx_to_index(ssize_t idx) {
-    return idx + 1 - N_POINTS;
+static inline ssize_t tree_leaf_idx_to_index(ssize_t idx, ssize_t n_points) {
+    return idx + 1 - n_points;
 }
 
 // Calling sizeof(tree_t) is always wrong, because tree nodes have an FMA
@@ -478,8 +475,8 @@ static inline ssize_t tree_ptr_to_index(tree_t const *base_ptr,
 }
 
 #ifndef PROFILE
-static void tree_print(tree_t const *tree_nodes,
-                       double const **points, ssize_t n_points) {
+static void tree_print(tree_t const *tree_nodes, double const **points,
+                       ssize_t n_points) {
     fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
 
     for (ssize_t i = 0; i < n_points - 1; ++i) {
@@ -494,7 +491,8 @@ static void tree_print(tree_t const *tree_nodes,
         if (tree_has_left_leaf(t) != 0) {
             fprintf(stdout, "%zd -1 -1 %.6lf", t->t_left, 0.0);
             for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(stdout, " %lf", points[ tree_leaf_idx_to_index(t->t_left) ][j]);
+                fprintf(stdout, " %lf",
+                        points[tree_leaf_idx_to_index(t->t_left, n_points)][j]);
             }
             fputc('\n', stdout);
         }
@@ -502,12 +500,15 @@ static void tree_print(tree_t const *tree_nodes,
         if (tree_has_right_leaf(t) != 0) {
             fprintf(stdout, "%zd -1 -1 %.6lf", t->t_right, 0.0);
             for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(stdout, " %lf", points[ tree_leaf_idx_to_index(t->t_right) ][j]);
+                fprintf(
+                    stdout, " %lf",
+                    points[tree_leaf_idx_to_index(t->t_right, n_points)][j]);
             }
             fputc('\n', stdout);
         }
 
-        fprintf(stdout, "%zd %zd %zd %.6lf", i, t->t_left, t->t_right, t->t_radius);
+        fprintf(stdout, "%zd %zd %zd %.6lf", i, t->t_left, t->t_right,
+                t->t_radius);
         for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
             fprintf(stdout, " %lf", t->t_center[j]);
         }
@@ -517,7 +518,7 @@ static void tree_print(tree_t const *tree_nodes,
 #endif
 
 static void tree_build_aux(tree_t *tree_nodes, double const **points,
-                           ssize_t idx, ssize_t l, ssize_t r,
+                           ssize_t n_points, ssize_t idx, ssize_t l, ssize_t r,
                            strategy_t find_points) {
     assert(r - l > 1, "1-sized trees are out of scope");
 
@@ -535,17 +536,18 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     ssize_t m = (l + r) / 2;
     if (r - l == 2) {
         t->t_type = TREE_TYPE_BOTH_LEAF;
-        t->t_left = tree_leaf_idx(l);
-        t->t_right =  tree_leaf_idx(r - 1);
+        t->t_left = tree_leaf_idx(l, n_points);
+        t->t_right = tree_leaf_idx(r - 1, n_points);
         return;
     }
 
     if (r - l == 3) {
         t->t_type = TREE_TYPE_LEFT_LEAF;
-        t->t_left = tree_leaf_idx(l);
+        t->t_left = tree_leaf_idx(l, n_points);
         t->t_right = tree_right_node_idx(idx, 3);
 
-        tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
+        tree_build_aux(tree_nodes, points, n_points, t->t_right, m, r,
+                       find_points);
         return;
     }
 
@@ -553,8 +555,8 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
     t->t_left = tree_left_node_idx(idx);
     t->t_right = tree_right_node_idx(idx, r - l);
 
-    tree_build_aux(tree_nodes, points, t->t_left, l, m, find_points);
-    tree_build_aux(tree_nodes, points, t->t_right, m, r, find_points);
+    tree_build_aux(tree_nodes, points, n_points, t->t_left, l, m, find_points);
+    tree_build_aux(tree_nodes, points, n_points, t->t_right, m, r, find_points);
 }
 
 // Compute the tree
@@ -562,8 +564,8 @@ static void tree_build_aux(tree_t *tree_nodes, double const **points,
 static void tree_build(tree_t *tree_nodes, double const **points,
                        ssize_t n_points, strategy_t find_points) {
     omp_set_nested(1);
-    tree_build_aux(tree_nodes, points, 0 /* idx */, 0 /* l */, n_points /* r */,
-                   find_points /* strategy */);
+    tree_build_aux(tree_nodes, points, n_points, 0 /* idx */, 0 /* l */,
+                   n_points /* r */, find_points /* strategy */);
 }
 
 #ifndef RANGE
@@ -589,7 +591,6 @@ static double const **parse_args(int argc, char *argv[], ssize_t *n_points,
 
     errno = 0;
     *n_points = strtoll(argv[2], NULL, 0);
-    N_POINTS = *n_points;
     if (errno != 0) {
         KILL("failed to parse %s as integer: %s", argv[2], strerror(errno));
     }
