@@ -678,6 +678,54 @@ static void tree_build_dist_aux(
     }
 
     // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
+
+    ssize_t m = (l + r) / 2;
+    if (r - l == 2) {
+        if (proc_id == 0) {
+            t->t_type = TREE_TYPE_BOTH_LEAF;
+            t->t_left = l;
+            t->t_right = r - 1;
+        }
+        return;
+    }
+
+    // TODO idx not correct
+
+    if (r - l == 3) {
+        if (proc_id == 0) {  // Just 1 of each set
+            t->t_type = TREE_TYPE_LEFT_LEAF;
+            t->t_left = l;
+            t->t_right = tree_right_node_idx(idx);
+
+            // tree_build_single_aux(tree_nodes, points, inner_products,
+            //                       inner_products_aux, t->t_right, m, r, proc_id,
+            //                       n_procs, ava, depth + 1);
+        }
+        return;
+    }
+
+    t->t_type = TREE_TYPE_INNER;
+    t->t_left = tree_left_node_idx(idx);
+    t->t_right = tree_right_node_idx(idx);
+
+    if (n_procs == 1) {
+        // Go to new aux function that is only single machine
+    } else {
+        int group = (proc_id < n_procs / 2) ? 0 : 1;
+        if (group == 1) proc_id = proc_id - n_procs / 2; // normalize proc_id
+        MPI_Comm_split(comm, group, proc_id, &comm);
+
+        if (group == 0) {
+            tree_build_dist_aux(tree_nodes, points, inner_products,
+                                inner_products_aux, t->t_left, l, m, proc_id,
+                                n_procs / 2, comm, ava, 0);
+
+        } else {
+            tree_build_dist_aux(tree_nodes, points, inner_products,
+                                inner_products_aux, t->t_right, m, r, proc_id,
+                                (n_procs + 1) / 2, comm, ava, 0);
+        }
+    }
 }
 
 static void tree_build_single_aux(
