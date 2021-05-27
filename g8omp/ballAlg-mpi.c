@@ -29,6 +29,7 @@ typedef enum computation_mode_t {
 } computation_mode_t;
 
 ssize_t N_DIMENSIONS = 0;  // NOLINT
+ssize_t N_POINTS = 0; // NOLINT
 
 #define xmalloc(size) priv_xmalloc__(__FILE__, __LINE__, size)
 #define xrealloc(ptr, size) priv_xrealloc__(__FILE__, __LINE__, ptr, size)
@@ -604,10 +605,18 @@ static inline bool tree_has_right_leaf(tree_t const *t) {
 // functions for assigning nodes
 //
 static inline ssize_t tree_left_node_idx(ssize_t parent) {
-    return 2 * parent + 1;
+    return parent + 1;
 }
-static inline ssize_t tree_right_node_idx(ssize_t parent) {
-    return 2 * parent + 2;
+static inline ssize_t tree_right_node_idx(ssize_t parent, ssize_t n_points) {
+    return parent + n_points / 2;
+}
+
+static inline ssize_t tree_leaf_idx(ssize_t index) {
+    return index + N_POINTS - 1;
+}
+
+static inline ssize_t tree_leaf_idx_to_index(ssize_t idx) {
+    return idx + 1 - N_POINTS;
 }
 
 // Calling sizeof(tree_t) is always wrong, because tree nodes have an FMA
@@ -679,8 +688,8 @@ static void tree_build_single_aux(
     if (r - l == 2) {
         if (proc_id % n_procs == 0) {
             t->t_type = TREE_TYPE_BOTH_LEAF;
-            t->t_left = l;
-            t->t_right = r - 1;
+            t->t_left = tree_leaf_idx(l);
+            t->t_right = tree_leaf_idx(r - 1);
         }
         return;
     }
@@ -688,8 +697,8 @@ static void tree_build_single_aux(
     if (r - l == 3) {
         if (proc_id % n_procs == 0) {  // Just 1 of each set
             t->t_type = TREE_TYPE_LEFT_LEAF;
-            t->t_left = l;
-            t->t_right = tree_right_node_idx(idx);
+            t->t_left = tree_leaf_idx(l);
+            t->t_right = tree_right_node_idx(idx, 3);
 
             tree_build_single_aux(tree_nodes, points, inner_products,
                                   inner_products_aux, t->t_right, m, r, proc_id,
@@ -700,7 +709,7 @@ static void tree_build_single_aux(
 
     t->t_type = TREE_TYPE_INNER;
     t->t_left = tree_left_node_idx(idx);
-    t->t_right = tree_right_node_idx(idx);
+    t->t_right = tree_right_node_idx(idx, r - l);
 
     if (n_procs == 1) {
         if (ava > 0) {  // Parallel
@@ -805,7 +814,7 @@ static void tree_build_dist_aux(
         if (proc_id == 0) {  // Just 1 of each set
             t->t_type = TREE_TYPE_LEFT_LEAF;
             t->t_left = l;
-            t->t_right = tree_right_node_idx(idx);
+            t->t_right = tree_right_node_idx(idx, 3);
 
             // TODO: figure out ids
             tree_build_single_aux(tree_nodes, points, inner_products,
@@ -817,7 +826,7 @@ static void tree_build_dist_aux(
 
     t->t_type = TREE_TYPE_INNER;
     t->t_left = tree_left_node_idx(idx);
-    t->t_right = tree_right_node_idx(idx);
+    t->t_right = tree_right_node_idx(idx, r - l);
 
     if (n_procs == 1) {
         // Go to new aux function that is only single machine
@@ -856,9 +865,9 @@ static void tree_build_dist(tree_t *tree_nodes, double const **points,
 }
 
 #ifndef PROFILE
-static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
+static void tree_print(tree_t const *tree_nodes,
                        double const **points, int proc_id) {
-    for (ssize_t i = 0; i < tree_size; ++i) {
+    for (ssize_t i = 0; i < N_POINTS - 1; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
         if (t->t_radius == 0) {
             continue;
@@ -873,25 +882,24 @@ static void tree_print(tree_t const *tree_nodes, ssize_t tree_size,
             */
 
         if (tree_has_left_leaf(t) != 0) {
-            fprintf(stdout, "%zd -1 -1 %.6lf", tree_left_node_idx(i), 0.0);
+            fprintf(stdout, "%zd -1 -1 %.6lf", t->t_left, 0.0);
             for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(stdout, " %lf", points[t->t_left][j]);
+                fprintf(stdout, " %lf", points[ tree_leaf_idx_to_index(t->t_left) ][j]);
             }
             fputc('\n', stdout);
             fflush(stdout);
         }
 
         if (tree_has_right_leaf(t) != 0) {
-            fprintf(stdout, "%zd -1 -1 %.6lf", tree_right_node_idx(i), 0.0);
+            fprintf(stdout, "%zd -1 -1 %.6lf", t->t_right, 0.0);
             for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
-                fprintf(stdout, " %lf", points[t->t_right][j]);
+                fprintf(stdout, " %lf", points[ tree_leaf_idx_to_index(t->t_right) ][j]);
             }
             fputc('\n', stdout);
             fflush(stdout);
         }
 
-        fprintf(stdout, "%zd %zd %zd %.6lf", i, tree_left_node_idx(i),
-                tree_right_node_idx(i), t->t_radius);
+        fprintf(stdout, "%zd %zd %zd %.6lf", i, t->t_left, t->t_right, t->t_radius);
         for (size_t j = 0; j < (size_t)N_DIMENSIONS; ++j) {
             fprintf(stdout, " %lf", t->t_center[j]);
         }
@@ -909,28 +917,13 @@ static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
                                ssize_t *n_local_points, uint32_t seed,
                                tree_t **tree_nodes, double **inner_products,
                                computation_mode_t *c_mode) {
-    // Lemma: the number of inner nodes, m, will be Theta(n), worst case.
-    // Proof.
-    // 1. m < n: there are more leaves than inner nodes. This is true by
-    // induction, stemming from the fact that there are always 2 childs per
-    // inner node.
-    //
-    // 2. if n == 2^k: m = 2^k - 1.
-    // By induction.
-    // Base: a tree with 2^0 nodes has 0 inner nodes.
-    // Induction Step: consider two trees, each with 2^k nodes.
-    //                 by assumption, they have 2^k - 1 inner nodes.
-    //                 we join them using a root, creating a tree
-    //                 with 2^{k+1} leaves and 2^{k + 1} - 2 + 1 inner nodes
-    //                 (note the addition of the root).
-    //
 
     // We'll try to fit everything on the same machine.
     // If it fails, we only need n_points / n_procs
     *c_mode = CM_SINGLE_NODE;
     size_t sz_to_alloc = (size_t)n_points;
 
-    if (true) {
+    if (false) {
         *c_mode = CM_DISTRIBUTED;
         sz_to_alloc = (size_t)n_points / *n_procs;
     }
@@ -965,7 +958,7 @@ static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
         pt_arr = xmalloc(sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
     }
 
-    *tree_nodes = calloc((size_t)(2 * sz_to_alloc), tree_sizeof());
+    *tree_nodes = calloc((size_t)(sz_to_alloc), tree_sizeof()); //TODO when all in same machine shoud be N_POINTS - 1
     if (*tree_nodes == NULL) {
         if (errno != ENOMEM) {
             KILL("Failed to allocate (and not due to lack of memory");
@@ -980,7 +973,7 @@ static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
         pt_ptr = xrealloc(pt_arr, sizeof(double *) * sz_to_alloc);
         pt_arr = xrealloc(pt_arr,
                           sizeof(double) * (size_t)N_DIMENSIONS * sz_to_alloc);
-        *tree_nodes = xcalloc((size_t)(2 * sz_to_alloc), tree_sizeof());
+        *tree_nodes = xcalloc((size_t)(sz_to_alloc), tree_sizeof());
     }
 
     // We need 2x the number of nodes for inner products
@@ -1100,6 +1093,7 @@ static void parse_args(int argc, char *argv[], ssize_t *n_points,
 
     errno = 0;
     *n_points = strtoll(argv[2], NULL, 0);
+    N_POINTS = *n_points;
     if (errno != 0) {
         KILL("failed to parse %s as integer: %s", argv[2], strerror(errno));
     }
@@ -1163,7 +1157,7 @@ int main(int argc, char **argv) {
 #ifndef PROFILE
         fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
         fflush(stdout);
-        tree_print(tree_nodes, 2 * n_points, points, proc_id);
+        tree_print(tree_nodes, points, proc_id);
         fflush(stdout);
 #endif
     }
@@ -1172,7 +1166,7 @@ int main(int argc, char **argv) {
     for (int pid = 1; pid < n_procs; ++pid) {
         MPI_Barrier(MPI_COMM_WORLD);
         if (proc_id == pid) {
-            tree_print(tree_nodes, 2 * n_points, points, proc_id);
+            tree_print(tree_nodes, points, proc_id);
         }
     }
 #endif
