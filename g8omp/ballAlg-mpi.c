@@ -625,6 +625,8 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
                                     MPI_Comm comm) {
     int group = (proc_id < n_procs / 2) ? 0 : 1;
 
+    LOG("1 [%d]", proc_id);
+
     unsigned long my_index[n_procs][2];
     for (int i = 0; i < n_procs; i++) {
         if (group == 0) {
@@ -639,6 +641,8 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
     memset(indeces, 0, sizeof(indeces));
     MPI_Alltoall(my_index, 2, MPI_UNSIGNED_LONG, indeces, 2, MPI_UNSIGNED_LONG,
                  comm);
+
+    LOG("2 [%d]", proc_id);
 
     // send_index[i][j]: how much i will send to j
     size_t send_table[n_procs][n_procs];
@@ -667,6 +671,9 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
         }
     }
 
+
+    LOG("3 [%d]", proc_id);
+
     char line_buf[8 * 4096];
     size_t off = 0;
     off += sprintf(line_buf, "SEND_TABLE %d\n", proc_id);
@@ -677,28 +684,32 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
         off += sprintf(line_buf + off, " | %6zu\n", size);
     }
     off += sprintf(line_buf + off, "\n");
-    // fputs(line_buf, stderr);
-    fflush(stderr);
+    fputs(line_buf, stderr);
     fflush(stderr);
 
-    off = sprintf(line_buf, "BEFORE: [%d]: ", proc_id);
-    for (int i = 0; i < size; ++i) {
-        if (i < index ^ group == 1) {
-            off += sprintf(line_buf + off, "(");
-            for (int j = 0; j < N_DIMENSIONS; j++) {
-                off += sprintf(line_buf + off, "%2.6lf, ",
-                               points_values[i * N_DIMENSIONS + j]);
-            }
-            off += sprintf(line_buf + off, "), ");
-        } else {
-            off += sprintf(line_buf + off, "[");
-            for (int j = 0; j < N_DIMENSIONS; j++) {
-                off += sprintf(line_buf + off, "%2.6lf, ",
-                               points_values[i * N_DIMENSIONS + j]);
-            }
-            off += sprintf(line_buf + off, "], ");
-        }
-    }
+    LOG("3.5 [%d]", proc_id);
+
+    // off = sprintf(line_buf, "BEFORE: [%d]: ", proc_id);
+    // for (int i = 0; i < size; ++i) {
+    //     if (i < index ^ group == 1) {
+    //         off += sprintf(line_buf + off, "(");
+    //         for (int j = 0; j < N_DIMENSIONS; j++) {
+    //             off += sprintf(line_buf + off, "%2.6lf, ",
+    //                            points_values[i * N_DIMENSIONS + j]);
+    //         }
+    //         off += sprintf(line_buf + off, "), ");
+    //     } else {
+    //         off += sprintf(line_buf + off, "[");
+    //         for (int j = 0; j < N_DIMENSIONS; j++) {
+    //             off += sprintf(line_buf + off, "%2.6lf, ",
+    //                            points_values[i * N_DIMENSIONS + j]);
+    //         }
+    //         off += sprintf(line_buf + off, "], ");
+    //     }
+    // }
+
+    LOG("4 [%d]", proc_id);
+    fflush(stderr);
 
     size_t offset = (group == 0) ? index : 0;
     for (int i = 0; i < n_procs; ++i) {
@@ -714,19 +725,21 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
         offset += size;
     }
 
-    off += sprintf(line_buf + off, "\nAFTER : [%d]: ", proc_id);
-    for (int i = 0; i < size; ++i) {
-        off += sprintf(line_buf + off, "(");
-        for (int j = 0; j < N_DIMENSIONS; j++) {
-            off += sprintf(line_buf + off, "%2.6lf, ",
-                           points_values[i * N_DIMENSIONS + j]);
-        }
-        off += sprintf(line_buf + off, "), ");
-    }
-    off += sprintf(line_buf + off, "\n\n");
+    LOG("5 [%d]", proc_id);
+
+    // off += sprintf(line_buf + off, "\nAFTER : [%d]: ", proc_id);
+    // for (int i = 0; i < size; ++i) {
+    //     off += sprintf(line_buf + off, "(");
+    //     for (int j = 0; j < N_DIMENSIONS; j++) {
+    //         off += sprintf(line_buf + off, "%2.6lf, ",
+    //                        points_values[i * N_DIMENSIONS + j]);
+    //     }
+    //     off += sprintf(line_buf + off, "), ");
+    // }
+    // off += sprintf(line_buf + off, "\n\n");
 
     // fputs(line_buf, stderr);
-    fflush(stderr);
+    // fflush(stderr);
 }
 
 // ----------------------------------------------------------
@@ -783,11 +796,17 @@ static void dist_divide_point_set(double **points, double *points_values,
                                   ssize_t n_local_points,
                                   ssize_t n_active_points, int proc_id,
                                   int n_procs, MPI_Comm comm, double *center) {
+
+    LOG("DIVIDE [%d]", proc_id);
+
     // 2 * n
     double a[N_DIMENSIONS];
     double b[N_DIMENSIONS];
     double dist = dist_most_distant_approx(points, n_local_points, proc_id,
                                            n_procs, comm, a, b);
+
+
+    LOG("MAX_DIST [%d] %f", proc_id, dist);
     // points[a] may change after the partition
     double b_minus_a[N_DIMENSIONS];
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
@@ -805,13 +824,21 @@ static void dist_divide_point_set(double **points, double *points_values,
         dist_find_median(inner_products, n_local_points, &median_idx,
                          n_active_points, proc_id, n_procs, comm);
 
+    LOG("MEDIAN [%d] %f", proc_id, median);
+
     partition_on_median(points, inner_products_aux, 0, n_local_points, median);
 
+    LOG("LOCAL PARTITION [%d]", proc_id);
+
     untangle_at(points, points_values, n_local_points, median_idx);
+
+    LOG("UNTABGLING [%d]", proc_id);
 
     // O(n)
     dist_partition_on_index(points_values, n_local_points, median_idx, proc_id,
                             n_procs, comm);
+
+    LOG("GLOBAL PARTTION [%d]", proc_id);
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
@@ -1147,6 +1174,8 @@ static void tree_build_single(tree_t *tree_nodes, double **points,
 static void tree_build_dist_aux(tree_builder_t b) {
     assert(b.r - b.l > 1, "1-sized trees are out of scope");
 
+    LOG("GOING [%d] %zd", b.proc_id, b.id);
+
     tree_t *t = tree_index_to_ptr(b.tree_root_nodes, b.n_tree_root_nodes);
     // LOG("building tree node %zd: %p [%zd, %zd[ -> L = %zd, R = %zd", b.id,
     //(void*)t, b.l, b.r, tree_left_node_idx(b.id), tree_right_node_idx(b.id,
@@ -1166,6 +1195,9 @@ static void tree_build_dist_aux(tree_builder_t b) {
         b.tree_root_node_ids[b.n_tree_root_nodes] = b.id;
         b.n_tree_root_nodes += 1;
     }
+
+
+    LOG("GOING [%d] %zd", b.proc_id, b.id);
 
     // fprintf(stderr, "%zd %.12lf\n", depth, omp_get_wtime() - begin);
 
@@ -1308,7 +1340,7 @@ static void tree_print(tree_t const *tree_nodes, tree_t const *tree_root_nodes,
         }
     }
 
-    LOG("[%d] SUB ROOT ID: %zd", proc_id, sub_root_id);
+    //LOG("[%d] SUB ROOT ID: %zd", proc_id, sub_root_id);
     for (ssize_t i = 0; i < n_local_points; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
         if (t->t_radius == 0) {
@@ -1458,9 +1490,10 @@ static double **allocate(int *proc_id, int *n_procs, ssize_t n_points,
         // This is a small array: if we fail we are in bad shape
         *tree_root_nodes = xcalloc((size_t)*n_procs - 1, tree_sizeof());
         *tree_root_node_ids = xmalloc(((size_t)*n_procs - 1) * sizeof(ssize_t));
-        for (ssize_t idx = 0; idx < *n_procs - 1;
-             *tree_root_node_ids[idx++] = -1)
-            ;
+
+        for (ssize_t idx = 0; idx < *n_procs - 1; ++idx) {
+            (*tree_root_node_ids)[idx] = -1;
+        }
     }
 
     *n_local_points = (size_t)sz_to_alloc;
@@ -1581,7 +1614,7 @@ int main(int argc, char **argv) {
                             proc_id, n_procs, &root_id);
             break;
         case CM_PASSIVE:
-            LOG("passive mode %d->%d", old_id, proc_id);
+            //LOG("passive mode %d->%d", old_id, proc_id);
             break;
         default:
             __builtin_unreachable();
@@ -1611,7 +1644,7 @@ int main(int argc, char **argv) {
 #endif
     MPI_Finalize();
 
-    LOG("%d finished", proc_id);
+    //LOG("%d finished", proc_id);
     if (proc_id >= 0) {
         free((void *)point_values);
         free(points);
