@@ -388,7 +388,7 @@ static double find_median(double *vec, ssize_t l, ssize_t r) {
 
 static double dist_qselect(double *vec, ssize_t l, ssize_t r,
                            ssize_t *median_idx, ssize_t k, int proc_id,
-                           int n_procs, int round, int skips, MPI_Comm comm) {
+                           int n_procs, int round, MPI_Comm comm) {
     double pivot[2];
     int leader_id = round % n_procs;  // we do not know where the median is, we
                                       // need to circulate to find it
@@ -405,23 +405,15 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
 
     MPI_Bcast(&pivot, 2, MPI_DOUBLE, leader_id, comm);
     if (pivot[1] != 0.0) {
-        if (skips + 1 == n_procs) {
-            KILL("skipped too much");
-        }
-        LOG("skipping");
         return dist_qselect(vec, l, r, median_idx, k, proc_id, n_procs,
-                            round + 1, skips + 1, comm);
+                            round + 1, comm);
     }
-
-    LOG("[%d] pivot: %lf", proc_id, pivot[0]);
 
     unsigned long p = (unsigned long)partition(vec, l, r, pivot[0]);
     unsigned long sum_p = 0;
     MPI_Allreduce(&p, &sum_p, 1, MPI_UNSIGNED_LONG, MPI_SUM, comm);
 
-    assert(p <= sum_p, "asdflkas;d");
-
-    LOG("[%d] %2.6lf | %4lu | %4lu | %4zd", proc_id, pivot[0], p, sum_p, k);
+    assert(p <= sum_p, "the sum was incorrectly computed");
 
     *median_idx = p;
     if (sum_p == k) {
@@ -431,17 +423,17 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
     if (proc_id == leader_id) {
         if (sum_p > k) {
             return dist_qselect(vec, l, p, median_idx, k, proc_id, n_procs,
-                                round + 1, 0, comm);
+                                round + 1, comm);
         }
         return dist_qselect(vec, p + 1, r, median_idx, k, proc_id, n_procs,
-                            round + 1, 0, comm);
+                            round + 1, comm);
     }
     if (sum_p > k) {
         return dist_qselect(vec, l, p + 1, median_idx, k, proc_id, n_procs,
-                            round + 1, 0, comm);
+                            round + 1, comm);
     }
     return dist_qselect(vec, p, r, median_idx, k, proc_id, n_procs, round + 1,
-                        0, comm);
+                        comm);
 }
 
 static double dist_find_max(double *const vec, ssize_t size, double median,
@@ -464,13 +456,11 @@ static double dist_find_median(double *vec, ssize_t n_local_points,
                                int proc_id, int n_procs, MPI_Comm comm) {
     size_t k = n_active_points / 2;
     double median = dist_qselect(vec, 0, n_local_points, median_idx, k, proc_id,
-                                 n_procs, 0, 0, comm);
-    LOG("[%d] found %lf", proc_id, median);
+                                 n_procs, 0, comm);
     if (n_active_points % 2 == 0) {
         median = (median + dist_find_max(vec, n_local_points, median, proc_id,
                                          n_procs, comm)) /
                  2;
-        LOG("[%d] corrected %lf", proc_id, median);
     }
     return median;
 }
@@ -519,8 +509,8 @@ static void partition_on_median(double **points, double const *products,
              (void **)&points[m]);  // ensure median is on the right set
 }
 
-static void untangle_at(double **points, double const *points_values,
-                        ssize_t size, ssize_t index) {
+static void untangle_at(double **points, double *points_values, ssize_t size,
+                        ssize_t index) {
     ssize_t i = 0;
     ssize_t j = size - 1;
     double const *index_ptr = points_values + (index * N_DIMENSIONS);
@@ -541,11 +531,114 @@ static void untangle_at(double **points, double const *points_values,
     }
 }
 
-static void dist_partition_on_index(double const *points_values, ssize_t size,
+static void dist_partition_on_index(double *points_values, ssize_t size,
                                     ssize_t index, int proc_id, int n_procs,
                                     MPI_Comm comm) {
     int group = (proc_id < n_procs / 2) ? 0 : 1;
-    // TODO
+
+    unsigned long my_index[n_procs][2];
+    for (int i = 0; i < n_procs; i++) {
+        if (group == 0) {
+            my_index[i][0] = index;
+            my_index[i][1] = size;
+        } else {
+            my_index[i][0] = 0;
+            my_index[i][1] = index;
+        }
+    }
+    unsigned long indeces[n_procs][2];
+    memset(indeces, 0, sizeof(indeces));
+    MPI_Alltoall(my_index, 2, MPI_UNSIGNED_LONG, indeces, 2, MPI_UNSIGNED_LONG,
+                 comm);
+
+    // send_index[i][j]: how much i will send to j
+    size_t send_table[n_procs][n_procs];
+    memset(send_table, 0, sizeof(send_table));
+    for (int i = 0; i < n_procs; ++i) {
+        int gi = (i < n_procs / 2) ? 0 : 1;
+        for (int j = i + 1; j < n_procs; ++j) {
+            int gj = (j < n_procs / 2) ? 0 : 1;
+            if (gi == gj) {
+                continue;
+            }
+            if (indeces[i][0] == indeces[i][1]) {
+                continue;
+            }
+            if (indeces[j][0] == indeces[j][1]) {
+                continue;
+            }
+
+            size_t i_size = indeces[i][1] - indeces[i][0];
+            size_t j_size = indeces[j][1] - indeces[j][0];
+
+            send_table[i][j] = (i_size < j_size) ? i_size : j_size;
+            send_table[j][i] = send_table[i][j];
+            indeces[i][0] += send_table[i][j];
+            indeces[j][0] += send_table[i][j];
+        }
+    }
+
+    char line_buf[4096];
+    size_t off = 0;
+    off += sprintf(line_buf, "SEND_TABLE %d\n", proc_id);
+    for (int i = 0; i < n_procs; ++i) {
+        for (int j = 0; j < n_procs; ++j) {
+            off += sprintf(line_buf + off, "%4zu ", send_table[i][j]);
+        }
+        off += sprintf(line_buf + off, "\n");
+    }
+    off += sprintf(line_buf + off, "\n");
+    fputs(line_buf, stderr);
+    fflush(stderr);
+    fflush(stderr);
+
+    off = sprintf(line_buf, "BEFORE: [%d]: ", proc_id);
+    for (int i = 0; i < size; ++i) {
+        if (i < index ^ group == 1) {
+            off += sprintf(line_buf + off, "(");
+            for (int j = 0; j < N_DIMENSIONS; j++) {
+                off += sprintf(line_buf + off, "%2.6lf, ",
+                               points_values[i * N_DIMENSIONS + j]);
+            }
+            off += sprintf(line_buf + off, "), ");
+        } else {
+            off += sprintf(line_buf + off, "[");
+            for (int j = 0; j < N_DIMENSIONS; j++) {
+                off += sprintf(line_buf + off, "%2.6lf, ",
+                               points_values[i * N_DIMENSIONS + j]);
+            }
+            off += sprintf(line_buf + off, "], ");
+        }
+    }
+
+    size_t offset = (group == 0) ? index : 0;
+    for (int i = 0; i < n_procs; ++i) {
+        size_t size = send_table[proc_id][i];
+        if (size == 0) {
+            continue;
+        }
+        LOG("%d -> %d: sending %zu", proc_id, i, size);
+        MPI_Status status;
+        MPI_Sendrecv_replace(points_values + offset * N_DIMENSIONS,
+                             N_DIMENSIONS * size, MPI_DOUBLE, i,
+                             proc_id * n_procs + i, i, i * n_procs + proc_id,
+                             comm, &status);
+        offset += size;
+    }
+
+    off += sprintf(line_buf + off, "\nAFTER : [%d]: ", proc_id);
+    for (int i = 0; i < size; ++i) {
+        off += sprintf(line_buf + off, "(");
+        for (int j = 0; j < N_DIMENSIONS; j++) {
+            off += sprintf(line_buf + off, "%2.6lf, ",
+                           points_values[i * N_DIMENSIONS + j]);
+        }
+        off += sprintf(line_buf + off, "), ");
+    }
+    off += sprintf(line_buf + off, "\n\n");
+
+    fputs(line_buf, stderr);
+    fflush(stderr);
 }
 
 // ----------------------------------------------------------
@@ -596,7 +689,7 @@ static void divide_point_set(double **points, double *inner_products,
 // Divide a point set, finding its center (for the ball algorithm)
 // will reorder the points in the set.
 //
-static void dist_divide_point_set(double **points, double const *points_values,
+static void dist_divide_point_set(double **points, double *points_values,
                                   double *inner_products,
                                   double *inner_products_aux,
                                   ssize_t n_local_points,
@@ -781,7 +874,7 @@ typedef struct tree_builder_t {
     double **points;
 
     // point coordinates
-    double const *points_values;
+    double *points_values;
 
     // number of points
     ssize_t n_points;
