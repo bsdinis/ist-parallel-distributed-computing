@@ -14,7 +14,7 @@
 #define ssize_t __ssize_t
 #endif
 
-bool DISTRIBUTED = true;
+bool DISTRIBUTED = false;
 
 typedef enum computation_mode_t {
     // everything fits in memory, we have all nodes with the whole dataset
@@ -304,6 +304,17 @@ static double choose_pivot(double *vec, size_t l, size_t r) {
     double *hi = &vec[r - 1];
     double *mid = &vec[(l + r) / 2];
 
+    if (r - l <= 1) {
+        return *lo;
+    }
+
+    if (r - l == 2) {
+        if (*hi < *lo) {
+            swap_double(hi, lo);
+        }
+        return *hi;
+    }
+
     // Picks pivot from 3 numbers
     // leaves the 3 numbers ordered
     if (*mid < *lo) {
@@ -323,19 +334,30 @@ static double choose_pivot(double *vec, size_t l, size_t r) {
 // using best of three pivot
 //
 static size_t partition(double *vec, size_t l, size_t r, double pivot) {
-    bool swapped = false;
-    for (ssize_t idx = l; !swapped && idx < r - 1; ++idx) {
-        if (vec[idx] == pivot) {
-            swap_double(&vec[idx], &vec[r - 1]);
-            swapped = true;
-        }
+
+    // r-l <= 3 just order them and say were pivot is
+
+    if (r - l <= 3) {
+        choose_pivot(vec, l, r); // Just order the 3 elements
+        size_t i = l;
+        for (; i < r-1 && vec[i] < pivot; ++i) {} // find where pivot is
+        return i;
     }
 
+    bool swapped = false;
+    if (vec[(r + l) / 2] == pivot) {
+        swap_double(&vec[(r + l) / 2], &vec[r - 1]);
+        swapped = true;
+    }
+
+    //if (swapped) LOG("SWAPED, l = %zd r = %zd piv = %f", l, r ,pivot);
+
     ssize_t i = l;
-    ssize_t j = r - 2;
+    ssize_t j = (swapped) ? r - 2 : r - 1;
+    ssize_t pivot_index = j;
 
     while (i < j) {
-        while (vec[i] < pivot && i < r - 1) {
+        while (vec[i] < pivot && i < pivot_index) {
             i += 1;
         }
         while (vec[j] > pivot && l < j) {
@@ -379,10 +401,34 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {  // NOLINT
 //
 static double find_median(double *vec, ssize_t l, ssize_t r) {
     size_t k = (size_t)(r + l) / 2;
+
+    // char line_buf[8 * 4096];
+
+    // size_t off = 0;
+    // off += sprintf(line_buf + off, "\nl = %zd, r = %zd, size = %zd\nBEFORE", l, r, r-l);
+    // for (int i = l; i < r; ++i) {
+    //     off += sprintf(line_buf + off, " %f", vec[i]);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+
     double median = qselect(vec, l, r, k);
+
+    // off += sprintf(line_buf + off, " AFTER");
+    // for (int i = l; i < r; ++i) {
+    //     off += sprintf(line_buf + off, " %f", vec[i]);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+
+    // off += sprintf(line_buf + off, "median: %f\n", median);
+
     if ((r - l) % 2 == 0) {
         median = (median + find_max(vec, l, k)) / 2;
+        // off += sprintf(line_buf + off, "correction: %f\n", median);
     }
+
+    // fputs(line_buf, stderr);
+    // fflush(stderr);
+
     return median;
 }
 
@@ -404,16 +450,37 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
     }
 
     MPI_Bcast(&pivot, 2, MPI_DOUBLE, leader_id, comm);
+
     if (pivot[1] != 0.0) {
         return dist_qselect(vec, l, r, median_idx, k, proc_id, n_procs,
                             round + 1, comm);
     }
 
+    // char line_buf[8 * 4096];
+
+    // size_t off = 0;
+    // off += sprintf(line_buf, "\n[%d] R-[%d] L_id-[%d] | l = %zd, r = %zd pivout %f\n", proc_id, round, leader_id, l, r, pivot[0]);
+    // off += sprintf(line_buf + off, "[%d] MID BEFORE", proc_id);
+    // for (int i = l; i < r; ++i) {
+    //     off += sprintf(line_buf + off, " %f", vec[i]);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+
     unsigned long p = (unsigned long)partition(vec, l, r, pivot[0]);
+
     unsigned long sum_p = 0;
     MPI_Allreduce(&p, &sum_p, 1, MPI_UNSIGNED_LONG, MPI_SUM, comm);
 
     assert(p <= sum_p, "the sum was incorrectly computed");
+
+    // off += sprintf(line_buf + off, "[%d] MID  AFTER", proc_id);
+    // for (int i = l; i < r; ++i) {
+    //     off += sprintf(line_buf + off, " %f", vec[i]);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+    // off += sprintf(line_buf + off, "P = %zd | SUM_P = %zd\n", p, sum_p);
+    // fputs(line_buf, stderr);
+    // fflush(stderr);
 
     *median_idx = p;
     if (sum_p == k) {
@@ -455,13 +522,35 @@ static double dist_find_median(double *vec, ssize_t n_local_points,
                                ssize_t *median_idx, ssize_t n_active_points,
                                int proc_id, int n_procs, MPI_Comm comm) {
     size_t k = n_active_points / 2;
+
+    // char line_buf[8 * 4096];
+
+    // size_t off = 0;
+    // off += sprintf(line_buf, "[%d] BEFORE", proc_id);
+    // for (int i = 0; i < n_local_points; ++i) {
+    //     off += sprintf(line_buf + off, " %f", vec[i]);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+
     double median = dist_qselect(vec, 0, n_local_points, median_idx, k, proc_id,
                                  n_procs, 0, comm);
+
+    // off += sprintf(line_buf + off, "[%d]  AFTER", proc_id);
+    // for (int i = 0; i < n_local_points; ++i) {
+    //     off += sprintf(line_buf + off, " %f", vec[i]);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+
+    // off += sprintf(line_buf + off, "[%d] median: %f\n", proc_id, median);
     if (n_active_points % 2 == 0) {
         median = (median + dist_find_max(vec, n_local_points, median, proc_id,
                                          n_procs, comm)) /
                  2;
+
+        // off += sprintf(line_buf + off, "[%d] correction: %f\n", proc_id, median);
     }
+    // fputs(line_buf, stderr);
+    // fflush(stderr);
     return median;
 }
 
@@ -578,19 +667,19 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
         }
     }
 
-    char line_buf[8 * 4096];
-    size_t off = 0;
-    off += sprintf(line_buf, "SEND_TABLE %d\n", proc_id);
-    for (int i = 0; i < n_procs; ++i) {
-        for (int j = 0; j < n_procs; ++j) {
-            off += sprintf(line_buf + off, "%4zu ", send_table[i][j]);
-        }
-        off += sprintf(line_buf + off, " | %6zu\n", size);
-    }
-    off += sprintf(line_buf + off, "\n");
-    fputs(line_buf, stderr);
-    fflush(stderr);
-    fflush(stderr);
+    // char line_buf[8 * 4096];
+    // size_t off = 0;
+    // off += sprintf(line_buf, "SEND_TABLE %d\n", proc_id);
+    // for (int i = 0; i < n_procs; ++i) {
+    //     for (int j = 0; j < n_procs; ++j) {
+    //         off += sprintf(line_buf + off, "%4zu ", send_table[i][j]);
+    //     }
+    //     off += sprintf(line_buf + off, " | %6zu\n", size);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+    // fputs(line_buf, stderr);
+    // fflush(stderr);
+    // fflush(stderr);
 
     /*
     off = sprintf(line_buf, "BEFORE: [%d]: ", proc_id);
@@ -619,7 +708,7 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
         if (size == 0) {
             continue;
         }
-        LOG("%d -> %d: sending %zu", proc_id, i, size);
+        //LOG("%d -> %d: sending %zu", proc_id, i, size);
         MPI_Status status;
         MPI_Sendrecv_replace(points_values + offset * N_DIMENSIONS,
                              N_DIMENSIONS * size, MPI_DOUBLE, i,
@@ -641,8 +730,8 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
     off += sprintf(line_buf + off, "\n\n");
     */
 
-    fputs(line_buf, stderr);
-    fflush(stderr);
+    // fputs(line_buf, stderr);
+    // fflush(stderr);
 }
 
 // ----------------------------------------------------------
@@ -1147,14 +1236,14 @@ static void tree_build_dist(tree_t *tree_nodes, tree_t *tree_root_nodes,
 #ifndef PROFILE
 static void tree_print_node(tree_t const *t, ssize_t id, double **points,
                             ssize_t n_points, ssize_t offset, int proc_id) {
-    LOG("[%d] printing %zd {\n"
-        "   type:   %d,\n"
-        "   radius: %lf,\n"
-        "   left:   %zd | %zd,\n"
-        "   right:  %zd | %zd,\n"
-        "}", proc_id, id, t->t_type, t->t_radius,
-        t->t_left, (tree_has_left_leaf(t) ? tree_leaf_id_to_idx(t->t_left, n_points, offset) : -1),
-        t->t_left, (tree_has_right_leaf(t) ? tree_leaf_id_to_idx(t->t_right, n_points, offset) : -1));
+    // LOG("[%d] printing %zd {\n"
+    //     "   type:   %d,\n"
+    //     "   radius: %lf,\n"
+    //     "   left:   %zd | %zd,\n"
+    //     "   right:  %zd | %zd,\n"
+    //     "}", proc_id, id, t->t_type, t->t_radius,
+    //     t->t_left, (tree_has_left_leaf(t) ? tree_leaf_id_to_idx(t->t_left, n_points, offset) : -1),
+    //     t->t_left, (tree_has_right_leaf(t) ? tree_leaf_id_to_idx(t->t_right, n_points, offset) : -1));
 
     if (tree_has_left_leaf(t) != 0) {
         fprintf(stdout, "%zd -1 -1 %.6lf", t->t_left, 0.0);

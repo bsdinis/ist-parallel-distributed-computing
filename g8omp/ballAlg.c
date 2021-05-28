@@ -235,24 +235,29 @@ static size_t partition(double *vec, size_t l, size_t r) {
         return (size_t)(mid - vec);
     }
 
-    double pivout = *mid;
-    swap_double(mid, hi - 1);  // store pivout away
+    double pivot = *mid;
+    swap_double(mid, hi);  // store pivot away
 
-    size_t i = l + 1;
+    //LOG("SWAPED, l = %zd r = %zd piv = %f", l, r ,pivot);
 
-    for (size_t j = l + 1; j < r - 2; j++) {  // -2 (pivout and hi)
-        if (vec[j] <= pivout) {
-            double temp1 = vec[i];
-            double temp2 = vec[j];
-            vec[i] = temp2;
-            vec[j] = temp1;
-            i++;
+    ssize_t i = l;
+    ssize_t j = r - 2;
+
+    while (i < j) {
+        while (vec[i] < pivot && i < r - 2) {
+            i += 1;
+        }
+        while (vec[j] > pivot && l < j) {
+            j -= 1;
+        }
+
+        if (i < j) {
+            swap_double(&vec[i], &vec[j]);
+            i += 1;
+            j -= 1;
         }
     }
-    double temp1 = vec[i];
-    double temp2 = vec[r - 2];
-    vec[i] = temp2;
-    vec[r - 2] = temp1;
+    swap_double(&vec[i], &vec[r - 1]);
 
     return i;
 }
@@ -276,10 +281,34 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {
 //
 static double find_median(double *vec, ssize_t size) {
     size_t k = (size_t)size / 2;
+
+    // char line_buf[8 * 4096];
+
+    // size_t off = 0;
+    // off += sprintf(line_buf, "\nsize = %zd\nBEFORE", size);
+    // for (int i = 0; i < size; ++i) {
+    //     off += sprintf(line_buf + off, " %f", vec[i]);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+
     double median = qselect(vec, 0, (size_t)size, k);
+
+    // off += sprintf(line_buf + off, " AFTER");
+    // for (int i = 0; i < size; ++i) {
+    //     off += sprintf(line_buf + off, " %f", vec[i]);
+    // }
+    // off += sprintf(line_buf + off, "\n");
+
+    // off += sprintf(line_buf + off, "median: %f\n", median);
+
     if (size % 2 == 0) {
         median = (median + find_max(vec, k)) / 2;
+        // off += sprintf(line_buf + off, "correction: %f\n", median);
     }
+
+    // fputs(line_buf, stderr);
+    // fflush(stderr);
+
     return median;
 }
 
