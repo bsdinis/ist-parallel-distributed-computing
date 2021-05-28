@@ -159,6 +159,7 @@ typedef double (*strategy_t)(double const **, ssize_t, ssize_t, ssize_t *,
 //
 static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
                                   ssize_t *a, ssize_t *b) {
+
     double dist_l_a = 0;
     for (ssize_t i = l + 1; i < r; ++i) {
         double dist = distance_squared(points[l], points[i]);
@@ -244,6 +245,7 @@ static size_t partition(double *vec, size_t l, size_t r) {
     ssize_t j = r - 2;
 
     while (i < j) {
+
         while (vec[i] < pivot && i < r - 2) {
             i += 1;
         }
