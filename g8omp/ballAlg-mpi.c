@@ -1508,14 +1508,25 @@ static double **allocate(int *proc_id, int *n_procs, ssize_t n_points,
         // As discussed, the number of inner nodes is
         // at most the number of leaves of the tree.
         //
+#pragma omp parallel sections
+{
+    #pragma omp section
+    {
         for (ssize_t i = 0; i < n_points; i++) {
-            // fprintf(stderr, "%d pt_arr fill\n", omp_get_thread_num());
             for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
                 pt_arr[i * (N_DIMENSIONS) + j] =
                     RANGE * ((double)rand()) / RAND_MAX;
             }
+        }
+    }
+    #pragma omp section
+    {
+        for (ssize_t i = 0; i < n_points; i++) {
             pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
         }
+    }
+}
+
     } else if (*c_mode == CM_DISTRIBUTED) {
         int generating_id = 0;
         ssize_t to_generate = size_to_alloc(n_points, generating_id, *n_procs);
