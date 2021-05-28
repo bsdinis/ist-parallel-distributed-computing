@@ -14,7 +14,7 @@
 #define ssize_t __ssize_t
 #endif
 
-bool DISTRIBUTED = true;
+bool DISTRIBUTED = false;
 
 typedef enum computation_mode_t {
     // everything fits in memory, we have all nodes with the whole dataset
@@ -207,7 +207,6 @@ static double dist_most_distant_approx(double **points, ssize_t n_local_points,
     } else {
         memset(first_point, 0, sizeof(first_point));
     }
-
 
     MPI_Bcast(first_point, N_DIMENSIONS, MPI_DOUBLE, 0, comm);
 
@@ -454,7 +453,8 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
     // char line_buf[8 * 4096];
 
     // size_t off = 0;
-    // off += sprintf(line_buf, "\n[%d] R-[%d] L_id-[%d] | l = %zd, r = %zd pivout %f\n", proc_id, round, leader_id, l, r, pivot[0]);
+    // off += sprintf(line_buf, "\n[%d] R-[%d] L_id-[%d] | l = %zd, r = %zd
+    // pivout %f\n", proc_id, round, leader_id, l, r, pivot[0]);
 
     if (pivot[1] != 0.0) {
         // fputs(line_buf, stderr);
@@ -531,9 +531,9 @@ static double dist_find_median(double *vec, ssize_t n_local_points,
     // char line_buf[8 * 4096];
 
     // size_t off = 0;
-    // off += sprintf(line_buf + off, "\n[%d] size = %zd | here = %zd\n", proc_id, n_active_points, n_local_points);
-    // off += sprintf(line_buf + off, "BEFORE");
-    // for (int i = 0; i < n_local_points; ++i) {
+    // off += sprintf(line_buf + off, "\n[%d] size = %zd | here = %zd\n",
+    // proc_id, n_active_points, n_local_points); off += sprintf(line_buf + off,
+    // "BEFORE"); for (int i = 0; i < n_local_points; ++i) {
     //     off += sprintf(line_buf + off, " %f", vec[i]);
     // }
     // off += sprintf(line_buf + off, "\n");
@@ -687,7 +687,6 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
     // fputs(line_buf, stderr);
     // fflush(stderr);
 
-
     // off = sprintf(line_buf, "BEFORE: [%d]: ", proc_id);
     // for (int i = 0; i < size; ++i) {
     //     if (i < index ^ group == 1) {
@@ -707,7 +706,7 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
     //     }
     // }
 
-    //fflush(stderr);
+    // fflush(stderr);
 
     size_t offset = (group == 0) ? index : 0;
     for (int i = 0; i < n_procs; ++i) {
@@ -771,12 +770,14 @@ static void divide_point_set(double **points, double *inner_products,
     if (omp_available > 1) {
 #pragma omp parallel for num_threads(omp_available)
         for (ssize_t i = l; i < r; ++i) {
-            inner_products[i] = diff_inner_product(points[i], points[a], b_minus_a);
+            inner_products[i] =
+                diff_inner_product(points[i], points[a], b_minus_a);
             inner_products_aux[i] = inner_products[i];
         }
     } else {
         for (ssize_t i = l; i < r; ++i) {
-            inner_products[i] = diff_inner_product(points[i], points[a], b_minus_a);
+            inner_products[i] =
+                diff_inner_product(points[i], points[a], b_minus_a);
             inner_products_aux[i] = inner_products[i];
         }
     }
@@ -806,8 +807,7 @@ static void dist_divide_point_set(double **points, double *points_values,
                                   ssize_t n_local_points,
                                   ssize_t n_active_points, int proc_id,
                                   int n_procs, MPI_Comm comm, double *center) {
-
-    //LOG("DIVIDE [%d]", proc_id);
+    // LOG("DIVIDE [%d]", proc_id);
 
     // 2 * n
     double a[N_DIMENSIONS];
@@ -815,8 +815,7 @@ static void dist_divide_point_set(double **points, double *points_values,
     double dist = dist_most_distant_approx(points, n_local_points, proc_id,
                                            n_procs, comm, a, b);
 
-
-    //LOG("MAX_DIST [%d] %f", proc_id, dist);
+    // LOG("MAX_DIST [%d] %f", proc_id, dist);
 
     // points[a] may change after the partition
     double b_minus_a[N_DIMENSIONS];
@@ -836,21 +835,21 @@ static void dist_divide_point_set(double **points, double *points_values,
         dist_find_median(inner_products, n_local_points, &median_idx,
                          n_active_points, proc_id, n_procs, comm);
 
-    //LOG("MEDIAN [%d] %f", proc_id, median);
+    // LOG("MEDIAN [%d] %f", proc_id, median);
 
     partition_on_median(points, inner_products_aux, 0, n_local_points, median);
 
-    //LOG("LOCAL PARTITION [%d]", proc_id);
+    // LOG("LOCAL PARTITION [%d]", proc_id);
 
     untangle_at(points, points_values, n_local_points, median_idx);
 
-    //LOG("UNTABGLING [%d]", proc_id);
+    // LOG("UNTABGLING [%d]", proc_id);
 
     // O(n)
     dist_partition_on_index(points_values, n_local_points, median_idx, proc_id,
                             n_procs, comm);
 
-    //LOG("GLOBAL PARTTION [%d]", proc_id);
+    // LOG("GLOBAL PARTTION [%d]", proc_id);
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
@@ -1347,7 +1346,7 @@ static void tree_print(tree_t const *tree_nodes, tree_t const *tree_root_nodes,
         }
     }
 
-    //LOG("[%d] SUB ROOT ID: %zd", proc_id, sub_root_id);
+    // LOG("[%d] SUB ROOT ID: %zd", proc_id, sub_root_id);
     for (ssize_t i = 0; i < n_local_points; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
         if (t->t_radius == 0) {
@@ -1505,52 +1504,61 @@ static double **allocate(int *proc_id, int *n_procs, ssize_t n_points,
 
     *n_local_points = (size_t)sz_to_alloc;
     if (*c_mode == CM_SINGLE_NODE) {
-        // As discussed, the number of inner nodes is
-        // at most the number of leaves of the tree.
-        //
+// As discussed, the number of inner nodes is
+// at most the number of leaves of the tree.
+//
 #pragma omp parallel sections
-{
-    #pragma omp section
-    {
-        for (ssize_t i = 0; i < n_points; i++) {
-            for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
-                pt_arr[i * (N_DIMENSIONS) + j] =
-                    RANGE * ((double)rand()) / RAND_MAX;
+        {
+#pragma omp section
+            {
+                for (ssize_t i = 0; i < n_points; i++) {
+                    for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
+                        pt_arr[i * (N_DIMENSIONS) + j] =
+                            RANGE * ((double)rand()) / RAND_MAX;
+                    }
+                }
+            }
+#pragma omp section
+            {
+                for (ssize_t i = 0; i < n_points; i++) {
+                    pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
+                }
             }
         }
-    }
-    #pragma omp section
-    {
-        for (ssize_t i = 0; i < n_points; i++) {
-            pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
-        }
-    }
-}
-
     } else if (*c_mode == CM_DISTRIBUTED) {
         int generating_id = 0;
         ssize_t to_generate = size_to_alloc(n_points, generating_id, *n_procs);
         for (ssize_t i = 0, idx = 0; i < n_points; ++i) {
             if (generating_id == *proc_id) {
-                for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
-                    double r = rand();
-                    pt_arr[idx * (N_DIMENSIONS) + j] = (RANGE * r) / RAND_MAX;
-                }
-                pt_ptr[idx] = &pt_arr[idx * (N_DIMENSIONS)];
-                idx += 1;
-            } else {
-                for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
-                    double r = rand();
-                }
+                break;
+            }
+            for (ssize_t j = 0; j < N_DIMENSIONS; ++j) {
+                double r = rand();
             }
 
             to_generate -= 1;
             if (to_generate == 0) {
-                if (generating_id == *proc_id) {
-                    break;
-                }
                 generating_id += 1;
                 to_generate = size_to_alloc(n_points, generating_id, *n_procs);
+            }
+        }
+
+#pragma omp parallel sections
+        {
+#pragma omp section
+            {
+                for (ssize_t i = 0; i < *n_local_points; i++) {
+                    for (ssize_t j = 0; j < N_DIMENSIONS; j++) {
+                        pt_arr[i * (N_DIMENSIONS) + j] =
+                            RANGE * ((double)rand()) / RAND_MAX;
+                    }
+                }
+            }
+#pragma omp section
+            {
+                for (ssize_t i = 0; i < *n_local_points; i++) {
+                    pt_ptr[i] = &pt_arr[i * (N_DIMENSIONS)];
+                }
             }
         }
     }
@@ -1632,7 +1640,7 @@ int main(int argc, char **argv) {
                             proc_id, n_procs, &root_id);
             break;
         case CM_PASSIVE:
-            //LOG("passive mode %d->%d", old_id, proc_id);
+            // LOG("passive mode %d->%d", old_id, proc_id);
             break;
         default:
             __builtin_unreachable();
@@ -1662,7 +1670,7 @@ int main(int argc, char **argv) {
 #endif
     MPI_Finalize();
 
-    //LOG("%d finished", proc_id);
+    // LOG("%d finished", proc_id);
     if (proc_id >= 0) {
         free((void *)point_values);
         free(points);
