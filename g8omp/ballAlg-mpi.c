@@ -747,7 +747,7 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
 //
 static void divide_point_set(double **points, double *inner_products,
                              double *inner_products_aux, ssize_t l, ssize_t r,
-                             double *center) {
+                             double *center, ssize_t omp_available) {
     ssize_t a = l;
     ssize_t b = l;
 
@@ -765,6 +765,20 @@ static void divide_point_set(double **points, double *inner_products,
     for (ssize_t i = l; i < r; ++i) {
         inner_products[i] = diff_inner_product(points[i], points[a], b_minus_a);
         inner_products_aux[i] = inner_products[i];
+    }
+
+    // n
+    if (omp_available > 1) {
+#pragma omp parallel for num_threads(omp_available)
+        for (ssize_t i = l; i < r; ++i) {
+            inner_products[i] = diff_inner_product(points[i], points[a], b_minus_a);
+            inner_products_aux[i] = inner_products[i];
+        }
+    } else {
+        for (ssize_t i = l; i < r; ++i) {
+            inner_products[i] = diff_inner_product(points[i], points[a], b_minus_a);
+            inner_products_aux[i] = inner_products[i];
+        }
     }
 
     // O(n)
@@ -810,6 +824,7 @@ static void dist_divide_point_set(double **points, double *points_values,
         b_minus_a[i] = b[i] - a[i];
     }
 
+#pragma omp parallel for
     for (ssize_t i = 0; i < n_local_points; ++i) {
         inner_products[i] = diff_inner_product(points[i], a, b_minus_a);
         inner_products_aux[i] = inner_products[i];
@@ -1051,7 +1066,7 @@ static void tree_build_single_aux(tree_builder_t b) {
 
     // double const begin = omp_get_wtime();
     divide_point_set(b.points, b.inner_products, b.inner_products_aux, b.l, b.r,
-                     t->t_center);
+                     t->t_center, b.omp_available);
 
     if (b.proc_id % b.n_procs == 0) {
         t->t_radius = compute_radius(b.points, b.l, b.r, t->t_center);
