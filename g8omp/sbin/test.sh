@@ -13,7 +13,7 @@ then
     do
         total=$(echo $total + 1 | bc)
         echo -n "$(basename $dir)... "
-        OMP_N_THREADS=3 mpirun -n 3 ./ballAlg-mpi $(cat ${dir}/alg) 2>${dir}/time | ./ballQuery_pipe $(cat ${dir}/query) > ${dir}/output
+        OMP_N_THREADS=1 mpirun -n 2 ./ballAlg-mpi $(cat ${dir}/alg) 2>${dir}/time | ./ballQuery_pipe $(cat ${dir}/query) > ${dir}/output
         diff -b ${dir}/output ${dir}/expected > /dev/null 2> /dev/null;
         if [ $? -eq 0 ]
         then
@@ -31,7 +31,7 @@ else
         for dir in tests/${test_n}*;
         do
             echo -n "$(basename $dir)... "
-            OMP_N_THREADS=3 mpirun -n 3 ./ballAlg $(cat ${dir}/alg) 2>${dir}/time | ./ballQuery_pipe $(cat ${dir}/query) > ${dir}/output
+            OMP_N_THREADS=1 mpirun -n 2 ./ballAlg-mpi $(cat ${dir}/alg) 2>${dir}/time | ./ballQuery_pipe $(cat ${dir}/query) > ${dir}/output
             diff -b ${dir}/output ${dir}/expected;
             if [ $? -eq 0 ]
             then

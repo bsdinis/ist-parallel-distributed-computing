@@ -238,7 +238,7 @@ static size_t partition(double *vec, size_t l, size_t r) {
     double pivot = *mid;
     swap_double(mid, hi);  // store pivot away
 
-    //LOG("SWAPED, l = %zd r = %zd piv = %f", l, r ,pivot);
+    // LOG("SWAPED, l = %zd r = %zd piv = %f", l, r ,pivot);
 
     ssize_t i = l;
     ssize_t j = r - 2;
