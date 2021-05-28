@@ -277,10 +277,8 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {
 static double find_median(double *vec, ssize_t size) {
     size_t k = (size_t)size / 2;
     double median = qselect(vec, 0, (size_t)size, k);
-    LOG("found %lf", median);
     if (size % 2 == 0) {
         median = (median + find_max(vec, k)) / 2;
-        LOG("corrected %lf", median);
     }
     return median;
 }

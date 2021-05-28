@@ -166,7 +166,7 @@ double inner_product(double const *a, double const *b) {
 //
 // time = 2*n
 //
-static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
+static double most_distant_approx(double **points, ssize_t l, ssize_t r,
                                   ssize_t *a, ssize_t *b) {
     double dist_l_a = 0;
     for (ssize_t i = l + 1; i < r; ++i) {
@@ -198,10 +198,9 @@ static double most_distant_approx(double const **points, ssize_t l, ssize_t r,
 //
 // time = 2*n
 //
-static double dist_most_distant_approx(double const **points,
-                                       ssize_t n_local_points, int proc_id,
-                                       int n_procs, MPI_Comm comm, double *a,
-                                       double *b) {
+static double dist_most_distant_approx(double **points, ssize_t n_local_points,
+                                       int proc_id, int n_procs, MPI_Comm comm,
+                                       double *a, double *b) {
     double first_point[N_DIMENSIONS];
     size_t off = 0;
     if (proc_id == 0) {
@@ -387,9 +386,9 @@ static double find_median(double *vec, ssize_t l, ssize_t r) {
     return median;
 }
 
-static double dist_qselect(double *vec, ssize_t l, ssize_t r, ssize_t k,
-                           int proc_id, int n_procs, int round, int skips,
-                           MPI_Comm comm) {
+static double dist_qselect(double *vec, ssize_t l, ssize_t r,
+                           ssize_t *median_idx, ssize_t k, int proc_id,
+                           int n_procs, int round, int skips, MPI_Comm comm) {
     double pivot[2];
     int leader_id = round % n_procs;  // we do not know where the median is, we
                                       // need to circulate to find it
@@ -410,8 +409,8 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r, ssize_t k,
             KILL("skipped too much");
         }
         LOG("skipping");
-        return dist_qselect(vec, l, r, k, proc_id, n_procs, round + 1,
-                            skips + 1, comm);
+        return dist_qselect(vec, l, r, median_idx, k, proc_id, n_procs,
+                            round + 1, skips + 1, comm);
     }
 
     LOG("[%d] pivot: %lf", proc_id, pivot[0]);
@@ -424,27 +423,25 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r, ssize_t k,
 
     LOG("[%d] %2.6lf | %4lu | %4lu | %4zd", proc_id, pivot[0], p, sum_p, k);
 
-    /*
-     * the leader should calculate which group is smaller and broadcast a
-     * message to get rid from one of those groups.
-     */
+    *median_idx = p;
     if (sum_p == k) {
         return pivot[0];
     }
 
     if (proc_id == leader_id) {
         if (sum_p > k) {
-            return dist_qselect(vec, l, p, k, proc_id, n_procs, round + 1, 0,
-                                comm);
+            return dist_qselect(vec, l, p, median_idx, k, proc_id, n_procs,
+                                round + 1, 0, comm);
         }
-        return dist_qselect(vec, p + 1, r, k, proc_id, n_procs, round + 1, 0,
-                            comm);
+        return dist_qselect(vec, p + 1, r, median_idx, k, proc_id, n_procs,
+                            round + 1, 0, comm);
     }
     if (sum_p > k) {
-        return dist_qselect(vec, l, p + 1, k, proc_id, n_procs, round + 1, 0,
-                            comm);
+        return dist_qselect(vec, l, p + 1, median_idx, k, proc_id, n_procs,
+                            round + 1, 0, comm);
     }
-    return dist_qselect(vec, p, r, k, proc_id, n_procs, round + 1, 0, comm);
+    return dist_qselect(vec, p, r, median_idx, k, proc_id, n_procs, round + 1,
+                        0, comm);
 }
 
 static double dist_find_max(double *const vec, ssize_t size, double median,
@@ -463,11 +460,11 @@ static double dist_find_max(double *const vec, ssize_t size, double median,
 // Find the median value of a vector
 //
 static double dist_find_median(double *vec, ssize_t n_local_points,
-                               ssize_t n_active_points, int proc_id,
-                               int n_procs, MPI_Comm comm) {
+                               ssize_t *median_idx, ssize_t n_active_points,
+                               int proc_id, int n_procs, MPI_Comm comm) {
     size_t k = n_active_points / 2;
-    double median =
-        dist_qselect(vec, 0, n_local_points, k, proc_id, n_procs, 0, 0, comm);
+    double median = dist_qselect(vec, 0, n_local_points, median_idx, k, proc_id,
+                                 n_procs, 0, 0, comm);
     LOG("[%d] found %lf", proc_id, median);
     if (n_active_points % 2 == 0) {
         median = (median + dist_find_max(vec, n_local_points, median, proc_id,
@@ -494,7 +491,7 @@ static inline void swap_ptr(void **a, void **b) {
 // Partition a set of points based on the median value (in the products array).
 // This reorders the points in the [l, r[ range.
 //
-static void partition_on_median(double const **points, double const *products,
+static void partition_on_median(double **points, double const *products,
                                 ssize_t l, ssize_t r, double median) {
     ssize_t i = l;
     ssize_t j = r - 1;
@@ -522,6 +519,35 @@ static void partition_on_median(double const **points, double const *products,
              (void **)&points[m]);  // ensure median is on the right set
 }
 
+static void untangle_at(double **points, double const *points_values,
+                        ssize_t size, ssize_t index) {
+    ssize_t i = 0;
+    ssize_t j = size - 1;
+    double const *index_ptr = points_values + (index * N_DIMENSIONS);
+    while (i < index && j >= index) {
+        while (points[i] < index_ptr && i < index) {
+            i += 1;
+        }
+        while (points[j] >= index_ptr && j >= index) {
+            j -= 1;
+        }
+        if (i < j) {
+            for (size_t dim = 0; dim < N_DIMENSIONS; ++dim) {
+                swap_double(&points[i][dim], &points[j][dim]);  // NOLINT
+            }
+            i += 1;
+            j -= 1;
+        }
+    }
+}
+
+static void dist_partition_on_index(double const *points_values, ssize_t size,
+                                    ssize_t index, int proc_id, int n_procs,
+                                    MPI_Comm comm) {
+    int group = (proc_id < n_procs / 2) ? 0 : 1;
+    // TODO
+}
+
 // ----------------------------------------------------------
 // Algorithm
 // ----------------------------------------------------------
@@ -529,7 +555,7 @@ static void partition_on_median(double const **points, double const *products,
 // Divide a point set, finding its center (for the ball algorithm)
 // will reorder the points in the set.
 //
-static void divide_point_set(double const **points, double *inner_products,
+static void divide_point_set(double **points, double *inner_products,
                              double *inner_products_aux, ssize_t l, ssize_t r,
                              double *center) {
     ssize_t a = l;
@@ -570,7 +596,8 @@ static void divide_point_set(double const **points, double *inner_products,
 // Divide a point set, finding its center (for the ball algorithm)
 // will reorder the points in the set.
 //
-static void dist_divide_point_set(double const **points, double *inner_products,
+static void dist_divide_point_set(double **points, double const *points_values,
+                                  double *inner_products,
                                   double *inner_products_aux,
                                   ssize_t n_local_points,
                                   ssize_t n_active_points, int proc_id,
@@ -592,18 +619,20 @@ static void dist_divide_point_set(double const **points, double *inner_products,
         inner_products_aux[i] = inner_products[i];
     }
 
-    // TODO
     // O(n)
-    // No point in parallelizing: requires too much synchronization overhead
-    double median = dist_find_median(inner_products, n_local_points,
-                                     n_active_points, proc_id, n_procs, comm);
+    ssize_t median_idx = 0;
+    double median =
+        dist_find_median(inner_products, n_local_points, &median_idx,
+                         n_active_points, proc_id, n_procs, comm);
+
+    partition_on_median(points, inner_products_aux, 0, n_local_points, median);
+
+    untangle_at(points, points_values, n_local_points, median_idx);
 
     // O(n)
-    // Not possible in parallelizing
-    // partition_on_median(points, inner_products_aux, n_local_points, median);
-    // // TODO
+    dist_partition_on_index(points_values, n_local_points, median_idx, proc_id,
+                            n_procs, comm);
 
-    // TODO
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
         center[i] =
@@ -618,7 +647,7 @@ static void dist_divide_point_set(double const **points, double *inner_products,
 //
 // Returns radius
 //
-static double compute_radius(double const **points, ssize_t l, ssize_t r,
+static double compute_radius(double **points, ssize_t l, ssize_t r,
                              double const *center) {
     double max_dist_sq = 0.0;
     for (ssize_t i = l; i < r; i++) {
@@ -637,7 +666,7 @@ static double compute_radius(double const **points, ssize_t l, ssize_t r,
 //
 // Returns radius
 //
-static double dist_compute_radius(double const **points, ssize_t n_local_points,
+static double dist_compute_radius(double **points, ssize_t n_local_points,
                                   int proc_id, int n_procs, MPI_Comm comm,
                                   double const *center) {
     double max_dist_sq = 0.0;
@@ -648,23 +677,11 @@ static double dist_compute_radius(double const **points, ssize_t n_local_points,
         }
     }
 
-    double max_sq_mine[n_procs];
-    for (ssize_t i = 0; i < n_procs; ++i) {
-        max_sq_mine[i] = max_dist_sq;
-    }
-
-    double max_sq_all[n_procs];
-    MPI_Gather(max_sq_mine, 1, MPI_DOUBLE, max_sq_all, 1, MPI_DOUBLE, 0, comm);
+    double global_max = 0;
+    MPI_Reduce(&max_dist_sq, &global_max, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
 
     if (proc_id == 0) {
-        max_dist_sq = 0.0;
-        for (ssize_t i = 0; i < n_procs; ++i) {
-            if (max_dist_sq < max_sq_all[i]) {
-                max_dist_sq = max_sq_all[i];
-            }
-        }
-
-        return sqrt(max_dist_sq);
+        return sqrt(global_max);
     } else {
         return 0.0;
     }
@@ -761,7 +778,10 @@ typedef struct tree_builder_t {
     tree_t *tree_root_nodes;
 
     // list of points
-    double const **points;
+    double **points;
+
+    // point coordinates
+    double const *points_values;
 
     // number of points
     ssize_t n_points;
@@ -909,13 +929,14 @@ static void tree_build_single_aux(tree_builder_t b) {
 
 // Compute the tree
 //
-static void tree_build_single(tree_t *tree_nodes, double const **points,
+static void tree_build_single(tree_t *tree_nodes, double **points,
                               double *inner_products, ssize_t n_points,
                               int proc_id, int n_procs) {
     omp_set_nested(1);
     tree_builder_t builder = {.tree_nodes = tree_nodes,
                               .tree_root_nodes = NULL,
                               .points = points,
+                              .points_values = points[0],
                               .n_points = n_points,
                               .n_active_points = n_points,
                               .n_local_points = n_points,
@@ -944,9 +965,10 @@ static void tree_build_dist_aux(tree_builder_t b) {
 
     // double const begin = omp_get_wtime();
 
-    dist_divide_point_set(b.points, b.inner_products, b.inner_products_aux,
-                          b.n_local_points, b.n_active_points, b.proc_id,
-                          b.n_procs, b.comm, t->t_center);
+    dist_divide_point_set(b.points, b.points_values, b.inner_products,
+                          b.inner_products_aux, b.n_local_points,
+                          b.n_active_points, b.proc_id, b.n_procs, b.comm,
+                          t->t_center);
 
     double radius = dist_compute_radius(b.points, b.n_local_points, b.proc_id,
                                         b.n_procs, b.comm, t->t_center);
@@ -998,7 +1020,7 @@ static void tree_build_dist_aux(tree_builder_t b) {
 // Compute the tree
 //
 static void tree_build_dist(tree_t *tree_nodes, tree_t *tree_root_nodes,
-                            double const **points, double *inner_products,
+                            double **points, double *inner_products,
                             ssize_t n_points, ssize_t n_local_points,
                             int proc_id, int n_procs) {
     omp_set_nested(1);
@@ -1006,6 +1028,7 @@ static void tree_build_dist(tree_t *tree_nodes, tree_t *tree_root_nodes,
         .tree_nodes = tree_nodes,
         .tree_root_nodes = tree_root_nodes,
         .points = points,
+        .points_values = points[0],
         .n_points = n_points,
         .n_active_points = n_points,
         .n_local_points = n_local_points,
@@ -1025,7 +1048,7 @@ static void tree_build_dist(tree_t *tree_nodes, tree_t *tree_root_nodes,
 }
 
 #ifndef PROFILE
-static void tree_print_node(tree_t const *t, ssize_t id, double const **points,
+static void tree_print_node(tree_t const *t, ssize_t id, double **points,
                             ssize_t n_points, ssize_t offset, int proc_id) {
     /*
     LOG("[%d] printing %zd {\n"
@@ -1069,7 +1092,7 @@ static void tree_print_node(tree_t const *t, ssize_t id, double const **points,
     fflush(stdout);
 }
 static void tree_print(tree_t const *tree_nodes, tree_t const *tree_root_nodes,
-                       double const **points, ssize_t n_points,
+                       double **points, ssize_t n_points,
                        ssize_t n_local_points, int proc_id, int n_procs) {
     ssize_t offset = n_local_points * proc_id;
     ssize_t sub_root_id = 0;
@@ -1115,11 +1138,10 @@ static ssize_t size_to_alloc(ssize_t n_points, int proc_id, int n_procs) {
     return (n_procs - (n_points % n_procs) < proc_id) ? div + 1 : div;
 }
 
-static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
-                               ssize_t *n_local_points, uint32_t seed,
-                               tree_t **tree_nodes, tree_t **tree_root_nodes,
-                               double **inner_products,
-                               computation_mode_t *c_mode) {
+static double **allocate(int *proc_id, int *n_procs, ssize_t n_points,
+                         ssize_t *n_local_points, uint32_t seed,
+                         tree_t **tree_nodes, tree_t **tree_root_nodes,
+                         double **inner_products, computation_mode_t *c_mode) {
     // We'll try to fit everything on the same machine.
     // If it fails, we only need n_points / n_procs
     *c_mode = CM_SINGLE_NODE;
@@ -1276,7 +1298,7 @@ static double const **allocate(int *proc_id, int *n_procs, ssize_t n_points,
         }
     }
 
-    return (double const **)pt_ptr;
+    return pt_ptr;
 }
 
 #undef RANGE
@@ -1334,7 +1356,7 @@ int main(int argc, char **argv) {
     double *inner_products = NULL;
     computation_mode_t c_mode = CM_SINGLE_NODE;
     int old_id = proc_id;
-    double const **points =
+    double **points =
         allocate(&proc_id, &n_procs, n_points, &n_local_points, seed,
                  &tree_nodes, &tree_root_nodes, &inner_products, &c_mode);
     double const *point_values = points[0];
