@@ -14,6 +14,7 @@
 #define ssize_t __ssize_t
 #endif
 
+// Variable used to force distributed mode
 bool DISTRIBUTED = false;
 
 typedef enum computation_mode_t {
@@ -192,7 +193,7 @@ static double most_distant_approx(double **points, ssize_t l, ssize_t r,
     return dist_a_b;
 }
 
-// Find the two most distant points approximately in a distributed array
+// Find the two most distant points approximately in a distributed vector
 // first_point is the first point in the "first" proccess of the set (proc_id ==
 // 0) a is the furthest point from first_point b is the furthes point from a
 //
@@ -306,7 +307,7 @@ static double find_max(double *const vec, ssize_t l, ssize_t r) {
 }
 
 // Chooses a pivot
-// which is the median of 3 double (first, middle, last of the array)
+// which is the median of 3 double (first, middle, last of the vector)
 // The double are left in place but ordered between themselves
 //
 static double choose_pivot(double *vec, size_t l, size_t r) {
@@ -340,20 +341,19 @@ static double choose_pivot(double *vec, size_t l, size_t r) {
     return *mid;
 }
 
-// Partitions the vector
-// using best of three pivot
+// Partitions the vector based on the pivot
 //
 static size_t partition(double *vec, size_t l, size_t r, double pivot) {
     if (r - l <= 3) {
         choose_pivot(vec, l, r);  // Just order the 3 elements
         size_t i = l;
-        for (; i < r - 1 && vec[i] < pivot; ++i) {
-        }  // find where pivot is
+        for (; i < r - 1 && vec[i] < pivot; ++i) {   // find where pivot is
+        }
         return i;
     }
 
     bool swapped = false;
-    if (vec[(r + l) / 2] == pivot) {  // stores pivot away
+    if (vec[(r + l) / 2] == pivot) {  // stores pivot away if in vector
         swap_double(&vec[(r + l) / 2], &vec[r - 1]);
         swapped = true;
     }
@@ -419,7 +419,7 @@ static double find_median(double *vec, ssize_t l, ssize_t r) {
     return median;
 }
 
-// Distributed QuickSelect algorithm
+// Distributed variant QuickSelect algorithm
 // Finds the kth_smallest index in a distributed vector
 //
 static double dist_qselect(double *vec, ssize_t l, ssize_t r,
@@ -460,7 +460,7 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
     }
 
     if (proc_id == leader_id) {  // vec[p] == pivot -> can be exclusive because
-                                 // isn't median
+                                 // it isn't median
         if (sum_p > k) {
             return dist_qselect(vec, l, p, median_idx, k, proc_id, n_procs,
                                 round + 1, comm);
@@ -469,11 +469,11 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
                             round + 1, comm);
     }
 
-    if (sum_p >
-        k) {  // vec[p] != pivot -> still needs to be considerad for median
+    if (sum_p > k) {  // vec[p] != pivot -> still needs to
+                      // be considerad for median
         p = (l == r) ? p
-                     : p + 1;  // edge case //if (l == r) then p == r so (p + 1
-                               // > r) which would increase the vector size
+                     : p + 1;  // edge case // if (l == r) then p == r so
+                               // (p + 1 > r) which would increase the vector size
         return dist_qselect(vec, l, p, median_idx, k, proc_id, n_procs,
                             round + 1, comm);
     }
@@ -585,7 +585,10 @@ static void untangle_at(double **points, double *points_values, ssize_t size,
 }
 
 // Partition the distributed vector
-// TOOD explain more
+// Each node receives the information pertaining to how much
+// each node receives.
+// Each node then can autonomously compute which ranges it has
+// to swap with which processes
 //
 static void dist_partition_on_index(double *points_values, ssize_t size,
                                     ssize_t index, int proc_id, int n_procs,
@@ -604,6 +607,7 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
     }
     unsigned long indeces[n_procs][2];
     memset(indeces, 0, sizeof(indeces));
+    // Send and reciev how much each nodes needs to recieve
     MPI_Alltoall(my_index, 2, MPI_UNSIGNED_LONG, indeces, 2, MPI_UNSIGNED_LONG,
                  comm);
 
@@ -634,6 +638,7 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
         }
     }
 
+    // Swaping fase (in place)
     size_t offset = (group == 0) ? index : 0;
     for (int i = 0; i < n_procs; ++i) {
         size_t size = send_table[proc_id][i];
@@ -1232,8 +1237,8 @@ static void tree_print(tree_t const *tree_nodes, tree_t const *tree_root_nodes,
                        ssize_t n_points, ssize_t n_local_points,
                        ssize_t sub_root_id, int proc_id, int n_procs) {
     ssize_t offset = n_points * proc_id;
-    if (tree_root_nodes !=
-        NULL) {  // nodes were calculated in a distributed manner
+    // nodes were calculated in a distributed manner
+    if (tree_root_nodes != NULL) {
 
         for (int i = 0; i < n_procs - 1; ++i) {
             if (tree_root_node_ids[i] == -1) {
@@ -1279,6 +1284,7 @@ static double **allocate(int *proc_id, int *n_procs, ssize_t n_points,
     *c_mode = CM_SINGLE_NODE;
     size_t sz_to_alloc = (size_t)n_points;
 
+    // if active forces distributed mode
     if (DISTRIBUTED) {
         *c_mode = CM_DISTRIBUTED;
         sz_to_alloc = size_to_alloc(n_points, *proc_id, *n_procs);
@@ -1359,7 +1365,7 @@ static double **allocate(int *proc_id, int *n_procs, ssize_t n_points,
 
     /***
      * - Some distributed, others not: abort (we could cycle until we stabilized
-     *on a set of distributed nodes, which may not exist)
+     *   on a set of distributed nodes, which may not exist)
      * - All distributed: do all distributedly
      * - 1+ single: drop all non-singles, compute as single
      ***/
