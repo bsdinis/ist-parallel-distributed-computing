@@ -208,7 +208,9 @@ static double dist_most_distant_approx(double **points, ssize_t n_local_points,
     }
 
     // Broadcast the first_point of the set of proccess
-    MPI_Bcast(first_point, N_DIMENSIONS, MPI_DOUBLE, 0, comm);
+    if (MPI_Bcast(first_point, N_DIMENSIONS, MPI_DOUBLE, 0, comm) != MPI_SUCCESS ) {
+        KILL("Failed broadcast of first point!");
+    }
 
     // Calculate local 'a'
     double dist_l_a = 0;
@@ -228,8 +230,10 @@ static double dist_most_distant_approx(double **points, ssize_t n_local_points,
     }
 
     // Send & Recv the local 'a' of each proccess
-    MPI_Alltoall(send_points, N_DIMENSIONS, MPI_DOUBLE, recv_points,
-                 N_DIMENSIONS, MPI_DOUBLE, comm);
+    if (MPI_Alltoall(send_points, N_DIMENSIONS, MPI_DOUBLE, recv_points,
+                 N_DIMENSIONS, MPI_DOUBLE, comm)  != MPI_SUCCESS ) {
+        KILL("Failed to distribute locals a");
+    }
 
     // Calcuta the 'a' point, which is the max of locals 'a'
     dist_l_a = 0;
@@ -260,8 +264,10 @@ static double dist_most_distant_approx(double **points, ssize_t n_local_points,
     }
 
     // Send & Recv the local 'b' of each proccess
-    MPI_Alltoall(send_points, N_DIMENSIONS, MPI_DOUBLE, recv_points,
-                 N_DIMENSIONS, MPI_DOUBLE, comm);
+    if (MPI_Alltoall(send_points, N_DIMENSIONS, MPI_DOUBLE, recv_points,
+                 N_DIMENSIONS, MPI_DOUBLE, comm) != MPI_SUCCESS ) {
+        KILL("Failed to distribute locals b");
+    }
 
     // Calcuta the 'b' point, which is the max of locals 'b'
     dist_a_b = 0;
@@ -440,7 +446,9 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
     }
 
     // Broadcast the pivot to use
-    MPI_Bcast(&pivot, 2, MPI_DOUBLE, leader_id, comm);
+    if (MPI_Bcast(&pivot, 2, MPI_DOUBLE, leader_id, comm) != MPI_SUCCESS ) {
+        KILL("Failed to broadcast pivot");
+    }
 
     if (pivot[1] != 0.0) {  // No pivot // edge case
         return dist_qselect(vec, l, r, median_idx, k, proc_id, n_procs,
@@ -450,7 +458,9 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
     unsigned long p = (unsigned long)partition(vec, l, r, pivot[0]);
 
     unsigned long sum_p = 0;
-    MPI_Allreduce(&p, &sum_p, 1, MPI_UNSIGNED_LONG, MPI_SUM, comm);
+    if (MPI_Allreduce(&p, &sum_p, 1, MPI_UNSIGNED_LONG, MPI_SUM, comm) != MPI_SUCCESS ) {
+        KILL("Failed to calculate sum_p");
+    }
 
     assert(p <= sum_p, "the sum was incorrectly computed");
 
@@ -492,7 +502,9 @@ static double dist_find_max(double *const vec, ssize_t size, double median,
         }
     }
     double g_max = 0;
-    MPI_Allreduce(&max, &g_max, 1, MPI_DOUBLE, MPI_MAX, comm);
+    if (MPI_Allreduce(&max, &g_max, 1, MPI_DOUBLE, MPI_MAX, comm) != MPI_SUCCESS ) {
+        KILL("Failed to calculate mas double");
+    }
     return g_max;
 }
 
@@ -608,8 +620,10 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
     unsigned long indeces[n_procs][2];
     memset(indeces, 0, sizeof(indeces));
     // Send and reciev how much each nodes needs to recieve
-    MPI_Alltoall(my_index, 2, MPI_UNSIGNED_LONG, indeces, 2, MPI_UNSIGNED_LONG,
-                 comm);
+    if (MPI_Alltoall(my_index, 2, MPI_UNSIGNED_LONG, indeces, 2, MPI_UNSIGNED_LONG,
+                 comm) != MPI_SUCCESS ) {
+        KILL("Failed distribute number of needed points");
+    }
 
     // send_index[i][j]: how much i will send to j
     size_t send_table[n_procs][n_procs];
@@ -646,10 +660,12 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
             continue;
         }
         MPI_Status status;
-        MPI_Sendrecv_replace(points_values + offset * N_DIMENSIONS,
+        if (MPI_Sendrecv_replace(points_values + offset * N_DIMENSIONS,
                              N_DIMENSIONS * size, MPI_DOUBLE, i,
                              proc_id * n_procs + i, i, i * n_procs + proc_id,
-                             comm, &status);
+                             comm, &status) != MPI_SUCCESS ) {
+            KILL("Failed to swap points");
+        }
         offset += size;
     }
 }
@@ -797,7 +813,9 @@ static double dist_compute_radius(double **points, ssize_t n_local_points,
 
     // Master proccess of set calculates global radius
     double global_max = 0;
-    MPI_Reduce(&max_dist_sq, &global_max, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
+    if (MPI_Reduce(&max_dist_sq, &global_max, 1, MPI_DOUBLE, MPI_MAX, 0, comm) != MPI_SUCCESS ) {
+        KILL("Failed to calculate global radius");
+    }
 
     if (proc_id == 0) {
         return sqrt(global_max);
@@ -1118,8 +1136,10 @@ static void tree_build_dist_aux(tree_builder_t b) {
 
     int group = (b.proc_id < b.n_procs / 2) ? 0 : 1;
     MPI_Comm new_comm;
-    MPI_Comm_split(b.comm, group, b.proc_id - group * (b.n_procs / 2),
-                   &new_comm);
+    if (MPI_Comm_split(b.comm, group, b.proc_id - group * (b.n_procs / 2),
+                   &new_comm) != MPI_SUCCESS ) {
+        KILL("Failed to split comunicator");
+    }
 
     b.comm = new_comm;
     MPI_Comm_rank(b.comm, &b.proc_id);
@@ -1374,7 +1394,9 @@ static double **allocate(int *proc_id, int *n_procs, ssize_t n_points,
     memset(mine, *c_mode == CM_SINGLE_NODE, sizeof(mine));
     bool single[*n_procs];
     memset(single, false, sizeof(single));
-    MPI_Alltoall(mine, 1, MPI_C_BOOL, single, 1, MPI_C_BOOL, MPI_COMM_WORLD);
+    if (MPI_Alltoall(mine, 1, MPI_C_BOOL, single, 1, MPI_C_BOOL, MPI_COMM_WORLD) != MPI_SUCCESS ) {
+        KILL("Failed distribute mode");
+    }
 
     int id_off = 0;
     int n_off = 0;
