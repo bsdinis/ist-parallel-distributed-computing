@@ -192,11 +192,10 @@ static double most_distant_approx(double **points, ssize_t l, ssize_t r,
     return dist_a_b;
 }
 
-// Find the two most distant points approximately
-// a is the furthest point from points[l]
+// Find the two most distant points approximately in a distributed array
+// first_point is the first point in the "first" proccess of the set (proc_id == 0)
+// a is the furthest point from first_point
 // b is the furthes point from a
-//
-// time = 2*n
 //
 static double dist_most_distant_approx(double **points, ssize_t n_local_points,
                                        int proc_id, int n_procs, MPI_Comm comm,
@@ -208,8 +207,10 @@ static double dist_most_distant_approx(double **points, ssize_t n_local_points,
         memset(first_point, 0, sizeof(first_point));
     }
 
+    // Broadcast the first_point of the set of proccess
     MPI_Bcast(first_point, N_DIMENSIONS, MPI_DOUBLE, 0, comm);
 
+    // Calculate local 'a'
     double dist_l_a = 0;
     ssize_t a_idx = 0;
     for (ssize_t i = 0; i < n_local_points; ++i) {
@@ -225,9 +226,12 @@ static double dist_most_distant_approx(double **points, ssize_t n_local_points,
     for (int idx = 0; idx < n_procs; ++idx) {
         memcpy(send_points[idx], points[a_idx], N_DIMENSIONS * sizeof(double));
     }
+
+    // Send & Recv the local 'a' of each proccess
     MPI_Alltoall(send_points, N_DIMENSIONS, MPI_DOUBLE, recv_points,
                  N_DIMENSIONS, MPI_DOUBLE, comm);
 
+    // Calcuta the 'a' point, which is the max of locals 'a'
     dist_l_a = 0;
     a_idx = 0;
     for (ssize_t i = 0; i < n_procs; ++i) {
@@ -239,6 +243,7 @@ static double dist_most_distant_approx(double **points, ssize_t n_local_points,
     }
     memcpy(a, recv_points[a_idx], N_DIMENSIONS * sizeof(double));
 
+    // Calculate local 'b'
     double dist_a_b = 0;
     ssize_t b_idx = 0;
     for (ssize_t i = 0; i < n_local_points; ++i) {
@@ -253,9 +258,12 @@ static double dist_most_distant_approx(double **points, ssize_t n_local_points,
     for (int idx = 0; idx < n_procs; ++idx) {
         memcpy(send_points[idx], points[b_idx], N_DIMENSIONS * sizeof(double));
     }
+
+    // Send & Recv the local 'b' of each proccess
     MPI_Alltoall(send_points, N_DIMENSIONS, MPI_DOUBLE, recv_points,
                  N_DIMENSIONS, MPI_DOUBLE, comm);
 
+    // Calcuta the 'b' point, which is the max of locals 'b'
     dist_a_b = 0;
     b_idx = 0;
     for (ssize_t i = 0; i < n_procs; ++i) {
@@ -298,6 +306,10 @@ static double find_max(double *const vec, ssize_t l, ssize_t r) {
     return max;
 }
 
+// Chooses a pivot
+// which is the median of 3 double (first, middle, last of the array)
+// The double are left in place but ordered between themselves
+//
 static double choose_pivot(double *vec, size_t l, size_t r) {
     double *lo = &vec[l];
     double *hi = &vec[r - 1];
@@ -314,8 +326,8 @@ static double choose_pivot(double *vec, size_t l, size_t r) {
         return *hi;
     }
 
-    // Picks pivot from 3 numbers
-    // leaves the 3 numbers ordered
+    // Picks pivot from 3 doubles
+    // leaves the 3 doubles ordered
     if (*mid < *lo) {
         swap_double(mid, lo);
     }
@@ -333,7 +345,6 @@ static double choose_pivot(double *vec, size_t l, size_t r) {
 // using best of three pivot
 //
 static size_t partition(double *vec, size_t l, size_t r, double pivot) {
-    // r-l <= 3 just order them and say were pivot is
 
     if (r - l <= 3) {
         choose_pivot(vec, l, r);  // Just order the 3 elements
@@ -344,12 +355,10 @@ static size_t partition(double *vec, size_t l, size_t r, double pivot) {
     }
 
     bool swapped = false;
-    if (vec[(r + l) / 2] == pivot) {
+    if (vec[(r + l) / 2] == pivot) { // stores pivot away
         swap_double(&vec[(r + l) / 2], &vec[r - 1]);
         swapped = true;
     }
-
-    // if (swapped) LOG("SWAPED, l = %zd r = %zd piv = %f", l, r ,pivot);
 
     ssize_t i = l;
     ssize_t j = (swapped) ? r - 2 : r - 1;
@@ -371,6 +380,8 @@ static size_t partition(double *vec, size_t l, size_t r, double pivot) {
     }
 
     if (swapped) {
+        // places pivot in position i
+        // such the forall ii where (i < ii < r) vec[ii] > vec[i]
         swap_double(&vec[i], &vec[r - 1]);
     }
 
@@ -401,36 +412,18 @@ static double qselect(double *vec, size_t l, size_t r, size_t k) {  // NOLINT
 static double find_median(double *vec, ssize_t l, ssize_t r) {
     size_t k = (size_t)(r + l) / 2;
 
-    // char line_buf[8 * 4096];
-
-    // size_t off = 0;
-    // off += sprintf(line_buf + off, "\nl = %zd, r = %zd, size = %zd\nBEFORE",
-    // l, r, r-l); for (int i = l; i < r; ++i) {
-    //     off += sprintf(line_buf + off, " %f", vec[i]);
-    // }
-    // off += sprintf(line_buf + off, "\n");
-
     double median = qselect(vec, l, r, k);
 
-    // off += sprintf(line_buf + off, " AFTER");
-    // for (int i = l; i < r; ++i) {
-    //     off += sprintf(line_buf + off, " %f", vec[i]);
-    // }
-    // off += sprintf(line_buf + off, "\n");
-
-    // off += sprintf(line_buf + off, "median: %f\n", median);
-
-    if ((r - l) % 2 == 0) {
+    if ((r - l) % 2 == 0) { // if r - l is even, median is the average
         median = (median + find_max(vec, l, k)) / 2;
-        // off += sprintf(line_buf + off, "correction: %f\n", median);
     }
-
-    // fputs(line_buf, stderr);
-    // fflush(stderr);
 
     return median;
 }
 
+// Distributed QuickSelect algorithm
+// Finds the kth_smallest index in a distributed vector
+//
 static double dist_qselect(double *vec, ssize_t l, ssize_t r,
                            ssize_t *median_idx, ssize_t k, int proc_id,
                            int n_procs, int round, MPI_Comm comm) {
@@ -439,7 +432,7 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
                                       // need to circulate to find it
 
     if (proc_id == leader_id) {
-        if (r == l) {
+        if (r == l) { // active vector is empty
             pivot[0] = 0.0;
             pivot[1] = 1.0;
         } else {
@@ -448,26 +441,13 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
         }
     }
 
+    // Broadcast the pivot to use
     MPI_Bcast(&pivot, 2, MPI_DOUBLE, leader_id, comm);
 
-    // char line_buf[8 * 4096];
-
-    // size_t off = 0;
-    // off += sprintf(line_buf, "\n[%d] R-[%d] L_id-[%d] | l = %zd, r = %zd
-    // pivout %f\n", proc_id, round, leader_id, l, r, pivot[0]);
-
-    if (pivot[1] != 0.0) {
-        // fputs(line_buf, stderr);
-        // fflush(stderr);
+    if (pivot[1] != 0.0) { // No pivot // edge case
         return dist_qselect(vec, l, r, median_idx, k, proc_id, n_procs,
                             round + 1, comm);
     }
-
-    // off += sprintf(line_buf + off, "[%d] MID BEFORE", proc_id);
-    // for (int i = l; i < r; ++i) {
-    //     off += sprintf(line_buf + off, " %f", vec[i]);
-    // }
-    // off += sprintf(line_buf + off, "\n");
 
     unsigned long p = (unsigned long)partition(vec, l, r, pivot[0]);
 
@@ -476,21 +456,12 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
 
     assert(p <= sum_p, "the sum was incorrectly computed");
 
-    // off += sprintf(line_buf + off, "[%d] MID  AFTER", proc_id);
-    // for (int i = l; i < r; ++i) {
-    //     off += sprintf(line_buf + off, " %f", vec[i]);
-    // }
-    // off += sprintf(line_buf + off, "\n");
-    // off += sprintf(line_buf + off, "P = %zd | SUM_P = %zd\n", p, sum_p);
-    // fputs(line_buf, stderr);
-    // fflush(stderr);
-
     *median_idx = p;
     if (sum_p == k) {
         return pivot[0];
     }
 
-    if (proc_id == leader_id) {
+    if (proc_id == leader_id) { // vec[p] == pivot -> can be exclusive because isn't median
         if (sum_p > k) {
             return dist_qselect(vec, l, p, median_idx, k, proc_id, n_procs,
                                 round + 1, comm);
@@ -499,8 +470,8 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
                             round + 1, comm);
     }
 
-    if (sum_p > k) {
-        p = (l == r) ? p : p + 1;
+    if (sum_p > k) { // vec[p] != pivot -> still needs to be considerad for median
+        p = (l == r) ? p : p + 1; // edge case //if (l == r) then p == r so (p + 1 > r) which would increase the vector size
         return dist_qselect(vec, l, p, median_idx, k, proc_id, n_procs,
                             round + 1, comm);
     }
@@ -508,6 +479,8 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
                         comm);
 }
 
+// Finds the max double in a distributed vector
+//
 static double dist_find_max(double *const vec, ssize_t size, double median,
                             int proc_id, int n_procs, MPI_Comm comm) {
     double max = 0.0;
@@ -521,43 +494,21 @@ static double dist_find_max(double *const vec, ssize_t size, double median,
     return g_max;
 }
 
-// Find the median value of a vector
+// Find the median value of a distributed vector
 //
 static double dist_find_median(double *vec, ssize_t n_local_points,
                                ssize_t *median_idx, ssize_t n_active_points,
                                int proc_id, int n_procs, MPI_Comm comm) {
     size_t k = n_active_points / 2;
 
-    // char line_buf[8 * 4096];
-
-    // size_t off = 0;
-    // off += sprintf(line_buf + off, "\n[%d] size = %zd | here = %zd\n",
-    // proc_id, n_active_points, n_local_points); off += sprintf(line_buf + off,
-    // "BEFORE"); for (int i = 0; i < n_local_points; ++i) {
-    //     off += sprintf(line_buf + off, " %f", vec[i]);
-    // }
-    // off += sprintf(line_buf + off, "\n");
-
     double median = dist_qselect(vec, 0, n_local_points, median_idx, k, proc_id,
                                  n_procs, 0, comm);
-
-    // off += sprintf(line_buf + off, " AFTER");
-    // for (int i = 0; i < n_local_points; ++i) {
-    //     off += sprintf(line_buf + off, " %f", vec[i]);
-    // }
-    // off += sprintf(line_buf + off, "\n");
-
-    // off += sprintf(line_buf + off, "median: %f\n", median);
 
     if (n_active_points % 2 == 0) {
         median = (median + dist_find_max(vec, n_local_points, median, proc_id,
                                          n_procs, comm)) /
                  2;
-
-        // off += sprintf(line_buf + off, "correction: %f\n", median);
     }
-    // fputs(line_buf, stderr);
-    // fflush(stderr);
     return median;
 }
 
@@ -605,6 +556,9 @@ static void partition_on_median(double **points, double const *products,
              (void **)&points[m]);  // ensure median is on the right set
 }
 
+// Makes sure id the point pointer is to the left of the index then so is the point
+// Forall 0 <= i < index, then (points[i] - points_values) < index * N_DIMENSIONS
+//
 static void untangle_at(double **points, double *points_values, ssize_t size,
                         ssize_t index) {
     ssize_t i = 0;
@@ -627,6 +581,10 @@ static void untangle_at(double **points, double *points_values, ssize_t size,
     }
 }
 
+
+// Partition the distributed vector
+//TOOD explain more
+//
 static void dist_partition_on_index(double *points_values, ssize_t size,
                                     ssize_t index, int proc_id, int n_procs,
                                     MPI_Comm comm) {
@@ -674,40 +632,6 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
         }
     }
 
-    // char line_buf[8 * 4096];
-    // size_t off = 0;
-    // off += sprintf(line_buf, "SEND_TABLE %d\n", proc_id);
-    // for (int i = 0; i < n_procs; ++i) {
-    //     for (int j = 0; j < n_procs; ++j) {
-    //         off += sprintf(line_buf + off, "%4zu ", send_table[i][j]);
-    //     }
-    //     off += sprintf(line_buf + off, " | %6zu\n", size);
-    // }
-    // off += sprintf(line_buf + off, "\n");
-    // fputs(line_buf, stderr);
-    // fflush(stderr);
-
-    // off = sprintf(line_buf, "BEFORE: [%d]: ", proc_id);
-    // for (int i = 0; i < size; ++i) {
-    //     if (i < index ^ group == 1) {
-    //         off += sprintf(line_buf + off, "(");
-    //         for (int j = 0; j < N_DIMENSIONS; j++) {
-    //             off += sprintf(line_buf + off, "%2.6lf, ",
-    //                            points_values[i * N_DIMENSIONS + j]);
-    //         }
-    //         off += sprintf(line_buf + off, "), ");
-    //     } else {
-    //         off += sprintf(line_buf + off, "[");
-    //         for (int j = 0; j < N_DIMENSIONS; j++) {
-    //             off += sprintf(line_buf + off, "%2.6lf, ",
-    //                            points_values[i * N_DIMENSIONS + j]);
-    //         }
-    //         off += sprintf(line_buf + off, "], ");
-    //     }
-    // }
-
-    // fflush(stderr);
-
     size_t offset = (group == 0) ? index : 0;
     for (int i = 0; i < n_procs; ++i) {
         size_t size = send_table[proc_id][i];
@@ -721,20 +645,6 @@ static void dist_partition_on_index(double *points_values, ssize_t size,
                              comm, &status);
         offset += size;
     }
-
-    // off += sprintf(line_buf + off, "\nAFTER : [%d]: ", proc_id);
-    // for (int i = 0; i < size; ++i) {
-    //     off += sprintf(line_buf + off, "(");
-    //     for (int j = 0; j < N_DIMENSIONS; j++) {
-    //         off += sprintf(line_buf + off, "%2.6lf, ",
-    //                        points_values[i * N_DIMENSIONS + j]);
-    //     }
-    //     off += sprintf(line_buf + off, "), ");
-    // }
-    // off += sprintf(line_buf + off, "\n\n");
-
-    // fputs(line_buf, stderr);
-    // fflush(stderr);
 }
 
 // ----------------------------------------------------------
@@ -751,7 +661,6 @@ static void divide_point_set(double **points, double *inner_products,
     ssize_t b = l;
 
     // 2 * n
-    // No point in parallelizing: requires too much synchronization overhead
     double dist = most_distant_approx(points, l, r, &a, &b);
 
     // points[a] may change after the partition
@@ -783,11 +692,9 @@ static void divide_point_set(double **points, double *inner_products,
     }
 
     // O(n)
-    // No point in parallelizing: requires too much synchronization overhead
     double median = find_median(inner_products, l, r);
 
     // O(n)
-    // Not possible in parallelizing
     partition_on_median(points, inner_products_aux, l, r, median);
 
     double normalized_median = median / dist;
@@ -807,15 +714,11 @@ static void dist_divide_point_set(double **points, double *points_values,
                                   ssize_t n_local_points,
                                   ssize_t n_active_points, int proc_id,
                                   int n_procs, MPI_Comm comm, double *center) {
-    // LOG("DIVIDE [%d]", proc_id);
-
     // 2 * n
     double a[N_DIMENSIONS];
     double b[N_DIMENSIONS];
     double dist = dist_most_distant_approx(points, n_local_points, proc_id,
                                            n_procs, comm, a, b);
-
-    // LOG("MAX_DIST [%d] %f", proc_id, dist);
 
     // points[a] may change after the partition
     double b_minus_a[N_DIMENSIONS];
@@ -835,21 +738,14 @@ static void dist_divide_point_set(double **points, double *points_values,
         dist_find_median(inner_products, n_local_points, &median_idx,
                          n_active_points, proc_id, n_procs, comm);
 
-    // LOG("MEDIAN [%d] %f", proc_id, median);
-
+    // O(n)
     partition_on_median(points, inner_products_aux, 0, n_local_points, median);
 
-    // LOG("LOCAL PARTITION [%d]", proc_id);
-
+    // O(n)
     untangle_at(points, points_values, n_local_points, median_idx);
 
-    // LOG("UNTABGLING [%d]", proc_id);
-
-    // O(n)
     dist_partition_on_index(points_values, n_local_points, median_idx, proc_id,
                             n_procs, comm);
-
-    // LOG("GLOBAL PARTTION [%d]", proc_id);
 
     double normalized_median = median / dist;
     for (ssize_t i = 0; i < N_DIMENSIONS; ++i) {
@@ -860,8 +756,6 @@ static void dist_divide_point_set(double **points, double *points_values,
 }
 
 // Compute radius of a ball, given its center
-// As this requires synchronization to compute in parallel, we have observed
-// slowdowns from trying to parallelize this.
 //
 // Returns radius
 //
@@ -878,15 +772,14 @@ static double compute_radius(double **points, ssize_t l, ssize_t r,
     return sqrt(max_dist_sq);
 }
 
-// Compute radius of a ball, given its center
-// As this requires synchronization to compute in parallel, we have observed
-// slowdowns from trying to parallelize this.
+// Compute radius of a ball, given its center in the distributed set of points
 //
 // Returns radius
 //
 static double dist_compute_radius(double **points, ssize_t n_local_points,
                                   int proc_id, int n_procs, MPI_Comm comm,
                                   double const *center) {
+    //Calulate the local radius
     double max_dist_sq = 0.0;
     for (ssize_t i = 0; i < n_local_points; i++) {
         double dist = distance_squared(center, points[i]);
@@ -895,6 +788,7 @@ static double dist_compute_radius(double **points, ssize_t n_local_points,
         }
     }
 
+    // Master proccess of set calculates global radius
     double global_max = 0;
     MPI_Reduce(&max_dist_sq, &global_max, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
 
@@ -1055,6 +949,8 @@ typedef struct tree_builder_t {
     ssize_t omp_depth;
 } tree_builder_t;
 
+// Recurssion to build tree if subtree is all in memory
+//
 static void tree_build_single_aux(tree_builder_t b) {
     assert(b.r - b.l > 1, "1-sized trees are out of scope");
 
@@ -1151,7 +1047,7 @@ static void tree_build_single_aux(tree_builder_t b) {
     }
 }
 
-// Compute the tree
+// Compute the tree when tree fits in memory
 //
 static void tree_build_single(tree_t *tree_nodes, double **points,
                               double *inner_products, ssize_t n_points,
@@ -1182,6 +1078,8 @@ static void tree_build_single(tree_t *tree_nodes, double **points,
     tree_build_single_aux(builder);
 }
 
+// Recurssion to build tree if subtree is distributed
+//
 static void tree_build_dist_aux(tree_builder_t b) {
     assert(b.r - b.l > 1, "1-sized trees are out of scope");
 
@@ -1243,7 +1141,7 @@ static void tree_build_dist_aux(tree_builder_t b) {
     }
 }
 
-// Compute the tree
+// Compute the tree when tree is distributed
 //
 static void tree_build_dist(tree_t *tree_nodes, tree_t *tree_root_nodes,
                             ssize_t *tree_root_node_ids, double **points,
@@ -1326,12 +1224,14 @@ static void tree_print_node(tree_t const *t, ssize_t id, double **points,
     fputc('\n', stdout);
     fflush(stdout);
 }
+
 static void tree_print(tree_t const *tree_nodes, tree_t const *tree_root_nodes,
                        ssize_t const *tree_root_node_ids, double **points,
                        ssize_t n_points, ssize_t n_local_points,
                        ssize_t sub_root_id, int proc_id, int n_procs) {
     ssize_t offset = n_points * proc_id;
-    if (tree_root_nodes != NULL) {
+    if (tree_root_nodes != NULL) { // nodes were calculated in a distributed manner
+
         for (int i = 0; i < n_procs - 1; ++i) {
             if (tree_root_node_ids[i] == -1) {
                 continue;
@@ -1346,7 +1246,7 @@ static void tree_print(tree_t const *tree_nodes, tree_t const *tree_root_nodes,
         }
     }
 
-    // LOG("[%d] SUB ROOT ID: %zd", proc_id, sub_root_id);
+    // nodes were calculated in memory
     for (ssize_t i = 0; i < n_local_points; ++i) {
         tree_t const *t = tree_index_to_ptr(tree_nodes, i);
         if (t->t_radius == 0) {
@@ -1627,6 +1527,11 @@ int main(int argc, char **argv) {
                                &tree_root_node_ids, &inner_products, &c_mode);
     double const *point_values = points[0];
 
+    if (proc_id == 0) {
+        fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
+        fflush(stdout);
+    }
+
     ssize_t root_id = 0;
     MPI_Barrier(MPI_COMM_WORLD);
     switch (c_mode) {
@@ -1640,7 +1545,6 @@ int main(int argc, char **argv) {
                             proc_id, n_procs, &root_id);
             break;
         case CM_PASSIVE:
-            // LOG("passive mode %d->%d", old_id, proc_id);
             break;
         default:
             __builtin_unreachable();
@@ -1651,8 +1555,6 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%.1lf\n", MPI_Wtime() - begin);
         fflush(stderr);
 #ifndef PROFILE
-        fprintf(stdout, "%zd %zd\n", N_DIMENSIONS, 2 * n_points - 1);
-        fflush(stdout);
         tree_print(tree_nodes, tree_root_nodes, tree_root_node_ids, points,
                    n_points, n_local_points, root_id, proc_id, n_procs);
         fflush(stdout);
@@ -1670,7 +1572,6 @@ int main(int argc, char **argv) {
 #endif
     MPI_Finalize();
 
-    // LOG("%d finished", proc_id);
     if (proc_id >= 0) {
         free((void *)point_values);
         free(points);
