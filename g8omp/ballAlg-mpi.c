@@ -193,9 +193,8 @@ static double most_distant_approx(double **points, ssize_t l, ssize_t r,
 }
 
 // Find the two most distant points approximately in a distributed array
-// first_point is the first point in the "first" proccess of the set (proc_id == 0)
-// a is the furthest point from first_point
-// b is the furthes point from a
+// first_point is the first point in the "first" proccess of the set (proc_id ==
+// 0) a is the furthest point from first_point b is the furthes point from a
 //
 static double dist_most_distant_approx(double **points, ssize_t n_local_points,
                                        int proc_id, int n_procs, MPI_Comm comm,
@@ -345,7 +344,6 @@ static double choose_pivot(double *vec, size_t l, size_t r) {
 // using best of three pivot
 //
 static size_t partition(double *vec, size_t l, size_t r, double pivot) {
-
     if (r - l <= 3) {
         choose_pivot(vec, l, r);  // Just order the 3 elements
         size_t i = l;
@@ -355,7 +353,7 @@ static size_t partition(double *vec, size_t l, size_t r, double pivot) {
     }
 
     bool swapped = false;
-    if (vec[(r + l) / 2] == pivot) { // stores pivot away
+    if (vec[(r + l) / 2] == pivot) {  // stores pivot away
         swap_double(&vec[(r + l) / 2], &vec[r - 1]);
         swapped = true;
     }
@@ -414,7 +412,7 @@ static double find_median(double *vec, ssize_t l, ssize_t r) {
 
     double median = qselect(vec, l, r, k);
 
-    if ((r - l) % 2 == 0) { // if r - l is even, median is the average
+    if ((r - l) % 2 == 0) {  // if r - l is even, median is the average
         median = (median + find_max(vec, l, k)) / 2;
     }
 
@@ -432,7 +430,7 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
                                       // need to circulate to find it
 
     if (proc_id == leader_id) {
-        if (r == l) { // active vector is empty
+        if (r == l) {  // active vector is empty
             pivot[0] = 0.0;
             pivot[1] = 1.0;
         } else {
@@ -444,7 +442,7 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
     // Broadcast the pivot to use
     MPI_Bcast(&pivot, 2, MPI_DOUBLE, leader_id, comm);
 
-    if (pivot[1] != 0.0) { // No pivot // edge case
+    if (pivot[1] != 0.0) {  // No pivot // edge case
         return dist_qselect(vec, l, r, median_idx, k, proc_id, n_procs,
                             round + 1, comm);
     }
@@ -461,7 +459,8 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
         return pivot[0];
     }
 
-    if (proc_id == leader_id) { // vec[p] == pivot -> can be exclusive because isn't median
+    if (proc_id == leader_id) {  // vec[p] == pivot -> can be exclusive because
+                                 // isn't median
         if (sum_p > k) {
             return dist_qselect(vec, l, p, median_idx, k, proc_id, n_procs,
                                 round + 1, comm);
@@ -470,8 +469,11 @@ static double dist_qselect(double *vec, ssize_t l, ssize_t r,
                             round + 1, comm);
     }
 
-    if (sum_p > k) { // vec[p] != pivot -> still needs to be considerad for median
-        p = (l == r) ? p : p + 1; // edge case //if (l == r) then p == r so (p + 1 > r) which would increase the vector size
+    if (sum_p >
+        k) {  // vec[p] != pivot -> still needs to be considerad for median
+        p = (l == r) ? p
+                     : p + 1;  // edge case //if (l == r) then p == r so (p + 1
+                               // > r) which would increase the vector size
         return dist_qselect(vec, l, p, median_idx, k, proc_id, n_procs,
                             round + 1, comm);
     }
@@ -556,8 +558,9 @@ static void partition_on_median(double **points, double const *products,
              (void **)&points[m]);  // ensure median is on the right set
 }
 
-// Makes sure id the point pointer is to the left of the index then so is the point
-// Forall 0 <= i < index, then (points[i] - points_values) < index * N_DIMENSIONS
+// Makes sure id the point pointer is to the left of the index then so is the
+// point Forall 0 <= i < index, then (points[i] - points_values) < index *
+// N_DIMENSIONS
 //
 static void untangle_at(double **points, double *points_values, ssize_t size,
                         ssize_t index) {
@@ -581,9 +584,8 @@ static void untangle_at(double **points, double *points_values, ssize_t size,
     }
 }
 
-
 // Partition the distributed vector
-//TOOD explain more
+// TOOD explain more
 //
 static void dist_partition_on_index(double *points_values, ssize_t size,
                                     ssize_t index, int proc_id, int n_procs,
@@ -779,7 +781,7 @@ static double compute_radius(double **points, ssize_t l, ssize_t r,
 static double dist_compute_radius(double **points, ssize_t n_local_points,
                                   int proc_id, int n_procs, MPI_Comm comm,
                                   double const *center) {
-    //Calulate the local radius
+    // Calulate the local radius
     double max_dist_sq = 0.0;
     for (ssize_t i = 0; i < n_local_points; i++) {
         double dist = distance_squared(center, points[i]);
@@ -1230,7 +1232,8 @@ static void tree_print(tree_t const *tree_nodes, tree_t const *tree_root_nodes,
                        ssize_t n_points, ssize_t n_local_points,
                        ssize_t sub_root_id, int proc_id, int n_procs) {
     ssize_t offset = n_points * proc_id;
-    if (tree_root_nodes != NULL) { // nodes were calculated in a distributed manner
+    if (tree_root_nodes !=
+        NULL) {  // nodes were calculated in a distributed manner
 
         for (int i = 0; i < n_procs - 1; ++i) {
             if (tree_root_node_ids[i] == -1) {
